@@ -5,7 +5,6 @@ import tempfile
 import os
 import sys
 
-# Add src directory to path so we can import from trial.py
 sys.path.append('./src')
 
 # Import functions from your existing loaded_song_combo.py

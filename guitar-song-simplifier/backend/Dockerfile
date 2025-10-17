@@ -36,7 +36,7 @@ ENV PIP_NO_BUILD_ISOLATION=1
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
-COPY src/ ./src/
+COPY app/ ./app/
 
 # Copy the main API file
 COPY main.py .

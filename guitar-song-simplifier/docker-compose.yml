@@ -9,7 +9,7 @@ services:
       - PYTHONUNBUFFERED=1
     volumes:
       # Mount source code for development (comment out for production)
-      - ./src:/app/src:ro
+      - ./backend:/app:ro
       # Mount a volume for temporary audio files if needed
       - audio_cache:/tmp/audio
     restart: unless-stopped
@@ -19,7 +19,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
 
   frontend:
     build: ./frontend
@@ -31,4 +30,7 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
-      - backend 
+      - backend
+
+volumes:
+  audio_cache:
