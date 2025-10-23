@@ -1,15 +1,26 @@
 'use client'
 import React, { useState } from "react";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL
+
 export default function Home() {
   const [step, setStep] = useState<"upload"|"analyze"|"record"|null>(null)
   const [upload, setUpload] = useState(false)
   const [analyze, setAnalyze] = useState(false)
   const [record, setRecord] = useState(false)
+  const [response, setRes] = useState('')
 
-  const handleUpload = () => {
+  const handleUpload = async () => {
     setStep("upload")
     setUpload(true)
+    setAnalyze(false)
+    setRecord(false)
+    
+    const res = await fetch(`${API_URL}/`, {
+      method: "GET"
+    })
+    const data = await res.json()
+    setRes(JSON.stringify(data))
   }
   const handleAnalyze = () => {
     setStep("analyze")
@@ -38,10 +49,11 @@ export default function Home() {
           </li>
         </ol>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
+      <div className="flex gap-4 items-center flex-col sm:flex-row">
+        
           <button
             onClick={handleUpload}
-            className="rounded-full bg-gray-200 hover:bg-gray-300 text-black font-medium px-5 py-3"
+            className="rounded-full px-5 py-3 font-medium bg-gray-200 hover:bg-gray-300 text-black"
           >
             Upload New Song
           </button>
@@ -51,7 +63,7 @@ export default function Home() {
             disabled = {!upload}
             className={`rounded-full px-5 py-3 font-medium ${
               upload
-                ? "bg-blue-600 hover:bg-blue-700 text-white"
+                ? "bg-gray-200 hover:bg-gray-300 text-black"
                 : "bg-gray-400 cursor-not-allowed text-gray-200"
             }`}
           >
@@ -63,7 +75,7 @@ export default function Home() {
             disabled = {!analyze}
             className={`rounded-full px-5 py-3 font-medium ${
               analyze
-                ? "bg-blue-600 hover:bg-blue-700 text-white"
+                ? "bg-gray-200 hover:bg-gray-300 text-black"
                 : "bg-gray-400 cursor-not-allowed text-gray-200"
             }`}          >
             Record Yourself
@@ -71,13 +83,18 @@ export default function Home() {
         </div>
       </main>
      
-
-
-
-      {/* Dynamic Content Area
-      <div className="w-full max-w-2xl p-6 bg-white rounded-xl shadow-md text-center transition-all duration-300">
+      <div className="w-full max-w-2xl p-6 rounded-xl shadow-md text-center transition-all duration-300">
         
-      </div> */}
+        {step == 'upload' && (
+            <p >Uploaded! {response}</p>
+        )}
+        {step == 'analyze' && (
+          <p >Analyzed!</p>
+        )}
+        {step == 'record' && (
+          <p >Recorded!</p>
+        )}
+      </div>
     
 
     </div>

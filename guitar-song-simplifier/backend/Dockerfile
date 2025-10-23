@@ -38,8 +38,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code
 COPY app/ ./app/
 
-# Copy the main API file
-COPY main.py .
+# Copy other necessary files
+COPY loaded_song_combo.py .
+COPY realtime_combo.py .
+COPY complex_realtime_chords/ ./complex_realtime_chords/
 
 # Install FastAPI dependencies
 RUN pip install fastapi uvicorn python-multipart
@@ -47,5 +49,5 @@ RUN pip install fastapi uvicorn python-multipart
 # Expose port
 EXPOSE 8000
 
-# Command to run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Command to run the application with new structure
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 
