@@ -16,7 +16,7 @@ docker compose up
 - Backend: http://localhost:8000/
 
 ## Example commands to try:
-## To get beat times:
+To get beat times:
 ```bash
 curl -X POST "http://localhost:8000/analyze-audio/" \
 >   -H "Content-Type: multipart/form-data" \

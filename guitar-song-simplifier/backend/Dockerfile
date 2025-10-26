@@ -49,5 +49,5 @@ RUN pip install fastapi uvicorn python-multipart
 # Expose port
 EXPOSE 8000
 
-# Command to run the application with new structure
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Command to run the application with new structure (with auto-reload for development)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"] 

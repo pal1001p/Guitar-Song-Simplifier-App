@@ -14,3 +14,6 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "service": "guitar-song-simplifier"}
 
+@router.post("/upload_file")
+async def upload_file():
+    return {"file uploaded!"}
