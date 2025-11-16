@@ -7,7 +7,7 @@ A WIP repo for the full-stack app of a personal project for simplifying guitar s
 
 ## To run the app:
 ```bash
-git clone <this-repo-url>
+git clone https://github.com/pal1001p/Guitar-Song-Simplifier-App.git
 cd guitar-song-simplifier
 docker compose up 
 ```
