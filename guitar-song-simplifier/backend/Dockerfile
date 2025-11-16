@@ -32,7 +32,11 @@ RUN pip install --no-cache-dir numpy==1.23.5
 # Set environment variable for build isolation (as you do locally)
 ENV PIP_NO_BUILD_ISOLATION=1
 
-# Install the rest of the requirements
+# Install vamp first with explicit no-build-isolation so it can see numpy
+# This is needed because chord-extractor depends on vamp, and vamp needs numpy at build time
+RUN pip install --no-cache-dir --no-build-isolation vamp==1.1.0
+
+# Now install the rest of the requirements (chord-extractor will find vamp already installed)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
