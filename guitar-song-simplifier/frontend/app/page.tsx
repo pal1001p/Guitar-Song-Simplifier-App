@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import Script from "next/script"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL
@@ -13,12 +13,34 @@ export default function Home() {
   const [analyzing, setAnalyzing] = useState(false)
   const [record, setRecord] = useState(false)
   const [response, setRes] = useState<any>(null)
-  const [unique, setUnique] = useState<any>(null)
-  const [uniqueInfo, setUniqueInfo] = useState<any>(null)
+  const [uniqueChords, setUniqueChords] = useState<any>(null)
+  const [uniqueURLs, setuniqueURLs] = useState<any>(null)
   const [sequence, setSequence] = useState<any>(null)
-  
+  const [cachedImages, setCachedImages] = useState({})
+
+  useEffect (() =>{
+    for (const key in localStorage){
+      if (key.startsWith("https://www.scales-chords.com")) {
+        localStorage.removeItem(key);
+      }
+    }
+  }, [])
+
+  // add bottom padding to body when chord diagrams pop up
+  useEffect(() => {
+    if (step === 'analyze' && uniqueURLs) {
+      document.body.style.paddingBottom = '400px'
+    } else {
+      document.body.style.paddingBottom = ''
+    }
+    // cleanup on mount
+    return () => {
+      document.body.style.paddingBottom = ''
+    }
+  }, [step, uniqueURLs])
 
   const handleUpload = async () => {
+    console.log("handleUpload")
     setStep("upload")
     setUpload(true)
     setAnalyze(false)
@@ -42,17 +64,21 @@ export default function Home() {
       console.error(error)
       setUploading(true)
     }
-    // } finally {
-    //   setUploading(false)
-    // }
+
   }
 
   const uploadHandler = (event: any) => {
+    console.log("uploadHandler")
+
     setSelected(event.target.files[0])
     setUpload(false)
+    setAnalyze(false)
+    setRecord(false)
   }
 
   const handleAnalyze = async () => {
+    console.log("handleAnalyze")
+
     setStep("analyze")
     setAnalyze(true)
     if (!selected) return
@@ -74,7 +100,7 @@ export default function Home() {
       setSequence(result.chord_sequence)
       console.log(result.unique_chords)
       // array
-      setUnique(result.unique_chords)
+      setUniqueChords(result.unique_chords)
       setAnalyzing(false)
 
     }catch(error){
@@ -89,32 +115,84 @@ export default function Home() {
 
 
   useEffect(() => {
-    if (unique && unique.length > 0){
+    if (uniqueChords && uniqueChords.length > 0){
       fetchUniqueChords()
     }
-  }, [unique])
+  }, [uniqueChords])
 
+
+  // try to combine with cache logic
   const fetchUniqueChords = async () => {
-    if (!unique) return
+    if (!uniqueChords) return
     try {
       const url_list = []
-      for (const uc of unique){
+      for (const chord of uniqueChords){
         // proxy?
-        const res = await fetch(`${API_URL}/load_unique_chord?chord=${uc}`)
+        const res = await fetch(`${API_URL}/load_unique_chord?chord=${encodeURIComponent(chord)}`)
         if (!res.ok) throw new Error("External API error")
         const result = await res.json()
         console.log("url: ", result.img_url)
         url_list.push(result)
         }
-        setUniqueInfo(url_list)
+        setuniqueURLs(url_list)
 
     } catch(error){
       console.error(error)
     }
   }
 
+
+
+  useEffect(() => {
+    if (!uniqueURLs) return
+    
+    const loadIntoCache = async () => {
+      // create copy
+      const cache = { ...cachedImages };
+      
+      // for each unique chord's url
+      for (const chord of uniqueURLs) {
+        const url = chord.img_url
+        // try to get it from local storage if it's there
+        const cachedImg = localStorage.getItem(url)
+        if (cachedImg) {
+          console.log(`${chord.chord} is in local storage`)
+          cache[url] = cachedImg
+        } else 
+        // if not, fetch it first and then put into cache
+        {
+        try {
+          const res = await fetch(`${API_URL}/load_chord_images?url=${encodeURIComponent(url)}`);
+          const blob = await res.blob();
+          const reader = new FileReader();
+  
+          reader.onloadend = () => {
+            const base64data = reader.result;
+            if (base64data && typeof base64data === 'string') {
+              localStorage.setItem(url, base64data)
+              cache[url] = base64data;
+              setCachedImages({ ...cache })
+            }
+          };
+  
+          reader.readAsDataURL(blob);
+        } catch (error) {
+          console.error('Error caching image:', error)
+        }
+      }
+    }
+    setCachedImages(cache)
+  }  
+    loadIntoCache()
+  }, [uniqueURLs]) 
+  
+  useEffect(() => {
+    console.log("cached images: ", cachedImages)
+  }, [cachedImages] )
   
   const handleRecord = () => {
+    console.log("handleRecord")
+
     setStep("record")
     setRecord(true)
   }
@@ -194,26 +272,20 @@ export default function Home() {
         {step == 'upload' && (
           <p >{response}</p>
         )}
-        
         {step == 'record' && (
           <p >Recorded!</p>
         )}
-      </div>
 
-      {/* spacer */}
-      {step === 'analyze' && uniqueInfo && (
-        <div className="h-130 w-full"></div>
-      )}
-
-      {step === 'analyze' && uniqueInfo && (
+      {step === 'analyze' && uniqueURLs && cachedImages && (
         <div className="fixed bottom-0 left-0 right-0 bg-white-900/95 backdrop-blur-sm border-t border-white-700 p-4 z-50">
           <h3 className="text-center mb-4 font-mono text-lg text-gray-200">Chords You Have to Know</h3>
           <div className="flex flex-wrap justify-center gap-4 max-h-64 overflow-y-auto px-4 pb-4">
-            {uniqueInfo.map((chord: any, i: number) => (
+            {uniqueURLs.map((chord: any, i: number) => (
               <div key={i} className="flex flex-col items-center bg-blue-800/70 rounded-lg p-3 hover:bg-gray-800 transition-colors">
                 <img 
-                  src={chord.img_url} 
-                  alt={chord.chord}
+                  src = {cachedImages[chord.img_url]}
+                  //  src = {cachedImages[chord.img_url] || chord.img_url}
+                  alt = {chord.chord}
                   className="max-w-[120px] max-h-[120px] object-contain mb-2"
                 />
                 <p className="font-mono text-sm text-gray-300 font-medium">{chord.chord}</p>
@@ -223,9 +295,10 @@ export default function Home() {
         </div>
       )}
     
-    
     </div>
     </div>
-    
+    </div>   
+
+
   );
 }

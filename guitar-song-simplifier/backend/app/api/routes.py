@@ -1,11 +1,12 @@
 from fastapi import APIRouter, File, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from loaded_song_combo import get_beats, get_chords
 import librosa
 import os
 import requests
 from bs4 import BeautifulSoup, Comment
 import tempfile
+from urllib.parse import quote
 
 
 router = APIRouter()
@@ -63,7 +64,9 @@ async def analyze(file: UploadFile = File(...)):
 async def load_unique_chord(chord):
     try:
         # proxy to scrape
-        url = f"https://www.scales-chords.com/chord/guitar/{chord}"
+        # URL-encode the chord for the external API (for example, C# becomes C%23)
+        encoded_chord = quote(chord, safe='')
+        url = f"https://www.scales-chords.com/chord/guitar/{encoded_chord}"
         print(url)
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -99,3 +102,27 @@ async def load_unique_chord(chord):
     except Exception as e:
         raise HTTPException(status_code=500, detail = f"Chord fetch failed: {str(e)}")
 
+@router.get("/load_chord_images")
+async def load_chord_images(url: str):
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+        }
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"[CACHE] Url fetch failed: status code {res.status_code}")
+        
+        content_type = res.headers.get("content-type", "image/png")
+        print("Fetched content-type:", content_type)
+
+        return Response(
+            content=res.content,
+            media_type=content_type
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chord image for cache failed: {str(e)}")

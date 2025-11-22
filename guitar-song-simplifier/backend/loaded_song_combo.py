@@ -26,6 +26,15 @@ def get_chords(file):
     smoothed_chords = {}
     for start, end, chord in chords:
             if end - start >= min_length and chord != 'N' and chord is not None:
+                # pre-processing for better URL fetching later
+                if '#:min' in chord:
+                    chord = chord[:1] + '#m'
+                elif '#:maj' in chord:
+                    chord = chord[:1] + '#'
+                elif ':maj' in chord:
+                    chord = chord[:1]
+                elif ':min' in chord:
+                    chord = chord[:1] + 'm'
                 smoothed_chords[start] = chord
 
 
