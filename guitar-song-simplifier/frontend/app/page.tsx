@@ -6,18 +6,27 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL
 
 export default function Home() {
   const [step, setStep] = useState<"upload"|"analyze"|"record"|null>(null)
-  const [upload, setUpload] = useState(false)
   const [selected, setSelected] = useState<File | null>(null)
+  const [upload, setUpload] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [analyze, setAnalyze] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [record, setRecord] = useState(false)
+  const [recording, setRecording] = useState(false)
+  // for logging
   const [response, setRes] = useState<any>(null)
+  // singular chords extracted from current song
   const [uniqueChords, setUniqueChords] = useState<any>(null)
-  const [uniqueURLs, setuniqueURLs] = useState<any>(null)
+  // urls for chords extracted from current song
+  const [uniqueChordInfo, setuniqueChordInfo] = useState<any>(null)
+  // sequence of times, chords extracted from current song
   const [sequence, setSequence] = useState<any>(null)
+  // cached images for session
   const [cachedImages, setCachedImages] = useState({})
+  // for intermediate message that images are getting fetched
+  const [cacheing, setCacheing] = useState(false)
 
+  // clears local storage upon refresh
   useEffect (() =>{
     for (const key in localStorage){
       if (key.startsWith("https://www.scales-chords.com")) {
@@ -26,9 +35,9 @@ export default function Home() {
     }
   }, [])
 
-  // add bottom padding to body when chord diagrams pop up
+  // adds bottom padding to body when chord diagrams pop up
   useEffect(() => {
-    if (step === 'analyze' && uniqueURLs) {
+    if (step === 'analyze' && uniqueChordInfo && cachedImages) {
       document.body.style.paddingBottom = '400px'
     } else {
       document.body.style.paddingBottom = ''
@@ -37,10 +46,12 @@ export default function Home() {
     return () => {
       document.body.style.paddingBottom = ''
     }
-  }, [step, uniqueURLs])
+  }, [step, uniqueChordInfo])
 
+  // uploads user's file
   const handleUpload = async () => {
     console.log("handleUpload")
+
     setStep("upload")
     setUpload(true)
     setAnalyze(false)
@@ -67,6 +78,7 @@ export default function Home() {
 
   }
 
+  // lets user pick file
   const uploadHandler = (event: any) => {
     console.log("uploadHandler")
 
@@ -76,6 +88,7 @@ export default function Home() {
     setRecord(false)
   }
 
+  // analyzes file
   const handleAnalyze = async () => {
     console.log("handleAnalyze")
 
@@ -93,65 +106,59 @@ export default function Home() {
       const result = await res.json()
       if (!res.ok) throw new Error("Server error")
       setRes(JSON.stringify(result, null, 2))
-
-      console.log(result.chord_sequence)
-
       // object or dict 
+      console.log("Sequence:", result.chord_sequence)
       setSequence(result.chord_sequence)
-      console.log(result.unique_chords)
       // array
+      console.log("Unique Chords: ", result.unique_chords)
       setUniqueChords(result.unique_chords)
+
       setAnalyzing(false)
 
     }catch(error){
       console.error(error)
       setAnalyzing(true)
     } 
-    // } finally {
-    //   setAnalyzing(false)
-    // }
   }
 
 
-
+  // once unique chords have been extracted, do the intial fetch
   useEffect(() => {
     if (uniqueChords && uniqueChords.length > 0){
       fetchUniqueChords()
     }
   }, [uniqueChords])
 
-
-  // try to combine with cache logic
+  // complete the initial fetch for each chord's URL
   const fetchUniqueChords = async () => {
     if (!uniqueChords) return
     try {
       const url_list = []
       for (const chord of uniqueChords){
-        // proxy?
-        const res = await fetch(`${API_URL}/load_unique_chord?chord=${encodeURIComponent(chord)}`)
+        // proxy
+        const res = await fetch(`${API_URL}/load_unique_chord_url?chord=${encodeURIComponent(chord)}`)
         if (!res.ok) throw new Error("External API error")
         const result = await res.json()
-        console.log("url: ", result.img_url)
         url_list.push(result)
         }
-        setuniqueURLs(url_list)
-
+        setuniqueChordInfo(url_list)
     } catch(error){
       console.error(error)
     }
   }
 
-
-
+  // if the list of chord URLs has been gotten from fetchUniqueChords, try to load the image bytes into local storage
   useEffect(() => {
-    if (!uniqueURLs) return
-    
+    if (!uniqueChordInfo) return
+    console.log("Unique Chord Info: ", uniqueChordInfo)
+
+    setCacheing(true)
     const loadIntoCache = async () => {
       // create copy
       const cache = { ...cachedImages };
       
       // for each unique chord's url
-      for (const chord of uniqueURLs) {
+      for (const chord of uniqueChordInfo) {
         const url = chord.img_url
         // try to get it from local storage if it's there
         const cachedImg = localStorage.getItem(url)
@@ -162,7 +169,8 @@ export default function Home() {
         // if not, fetch it first and then put into cache
         {
         try {
-          const res = await fetch(`${API_URL}/load_chord_images?url=${encodeURIComponent(url)}`);
+          console.log(`${chord.chord} is NOT in local storage`)
+          const res = await fetch(`${API_URL}/load_chord_image_bytes?url=${encodeURIComponent(url)}`);
           const blob = await res.blob();
           const reader = new FileReader();
   
@@ -174,7 +182,6 @@ export default function Home() {
               setCachedImages({ ...cache })
             }
           };
-  
           reader.readAsDataURL(blob);
         } catch (error) {
           console.error('Error caching image:', error)
@@ -182,14 +189,17 @@ export default function Home() {
       }
     }
     setCachedImages(cache)
+    setCacheing(false)
   }  
     loadIntoCache()
-  }, [uniqueURLs]) 
+  }, [uniqueChordInfo]) 
   
+  // log cached images
   useEffect(() => {
-    console.log("cached images: ", cachedImages)
+    console.log("Cached Images: ", cachedImages)
   }, [cachedImages] )
   
+  // handle recording
   const handleRecord = () => {
     console.log("handleRecord")
 
@@ -199,10 +209,9 @@ export default function Home() {
 
   return (
     <div>
-
     <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      
       <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
+      {/* Title and main text */}
       <h1 className="font-mono text-5xl font-bold mb-10 text-gray-300">
         Guitar Song Simplifier
       </h1>
@@ -221,15 +230,15 @@ export default function Home() {
           </li>
         </ol>
 
+      {/* Main buttons */}
       <div className="flex gap-4 items-center flex-col sm:flex-row">
-        
           <input
             className = "rounded-full px-5 py-3 font-medium bg-gray-200 hover:bg-gray-300 text-black"
             type="file"
             accept="audio/*"
             onChange={uploadHandler}
           />
-          
+
           <button
             onClick={handleUpload}
             disabled={!selected || uploading}
@@ -251,14 +260,14 @@ export default function Home() {
                 : "bg-gray-400 cursor-not-allowed text-gray-200"
             }`}
           >
-            Analyze Song
+          {analyzing? 'Analyzing...' : 'Analyze Song'}
           </button>
 
           <button
             onClick={handleRecord}
-            disabled = {!analyze || analyzing}
+            disabled = {!analyze || analyzing || cacheing}
             className={`rounded-full px-5 py-3 font-medium ${
-              analyze && !analyzing
+              analyze && !analyzing && !cacheing
                 ? "bg-gray-200 hover:bg-gray-300 text-black"
                 : "bg-gray-400 cursor-not-allowed text-gray-200"
             }`}          >
@@ -267,24 +276,29 @@ export default function Home() {
         </div>
       </main>
      
+     {/* UI Changes for Each Step */}
       <div className="w-full max-w-2xl p-6 rounded-xl shadow-md text-center transition-all duration-300">
-        
         {step == 'upload' && (
-          <p >{response}</p>
-        )}
-        {step == 'record' && (
-          <p >Recorded!</p>
+          <p>
+            File Uploaded!
+          </p>
         )}
 
-      {step === 'analyze' && uniqueURLs && cachedImages && (
+        {step == 'record' && (
+          <p>
+            Recorded!
+          </p>
+        )}
+
+      {step === 'analyze' && uniqueChordInfo && (
         <div className="fixed bottom-0 left-0 right-0 bg-white-900/95 backdrop-blur-sm border-t border-white-700 p-4 z-50">
           <h3 className="text-center mb-4 font-mono text-lg text-gray-200">Chords You Have to Know</h3>
           <div className="flex flex-wrap justify-center gap-4 max-h-64 overflow-y-auto px-4 pb-4">
-            {uniqueURLs.map((chord: any, i: number) => (
+   
+            {cacheing? 'Getting chords...' : uniqueChordInfo.map((chord: any, i: number) => (
               <div key={i} className="flex flex-col items-center bg-blue-800/70 rounded-lg p-3 hover:bg-gray-800 transition-colors">
                 <img 
-                  src = {cachedImages[chord.img_url]}
-                  //  src = {cachedImages[chord.img_url] || chord.img_url}
+                  src = {cachedImages[chord.img_url] || chord.img_url}
                   alt = {chord.chord}
                   className="max-w-[120px] max-h-[120px] object-contain mb-2"
                 />
@@ -292,13 +306,36 @@ export default function Home() {
               </div>
             ))}
           </div>
+          
+          <div className="mt-6 border-t border-white-700 pt-4">
+            <h3 className="text-center mb-4 font-mono text-lg text-gray-200">Your Chord Sequence</h3>
+            <div className="flex gap-4 overflow-x-auto overflow-y-hidden whitespace-nowrap px-4 pb-4">
+            {Object.entries(sequence).map(([time, chord]) => {
+              const info = uniqueChordInfo.find(i => i.chord === chord);
+              const url = info?.img_url;
+
+              return (
+                <div
+                  key={time}
+                  className="flex flex-col items-center bg-green-800/70 rounded-lg p-3 hover:bg-gray-800 transition-colors"
+                  >
+                  <p className="font-mono text-sm text-gray-300 font-medium">{time}</p>
+
+                  <img
+                    src={cachedImages[url] || url}
+                    alt={chord}
+                    className="max-w-[120px] max-h-[120px] object-contain mb-2"
+                  />
+                  <p className="font-mono text-sm text-gray-300 font-medium">{chord}</p>
+                </div>
+              );
+            })}
+            </div>
+          </div>
         </div>
       )}
-    
     </div>
     </div>
     </div>   
-
-
   );
 }

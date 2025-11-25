@@ -35,6 +35,7 @@ def get_chords(file):
                     chord = chord[:1]
                 elif ':min' in chord:
                     chord = chord[:1] + 'm'
+                start = round(start,2)
                 smoothed_chords[start] = chord
 
 

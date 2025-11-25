@@ -46,11 +46,9 @@ async def analyze(file: UploadFile = File(...)):
             content = await file.read()
             tmp.write(content)
             tmp_path = tmp.name
-        # beats = get_beats(tmp_path)
         unique_chords, chord_sequence = get_chords(tmp_path)
         
         result = {
-            # "beats": beats,
             "unique_chords": unique_chords,
             "chord_sequence": chord_sequence
             }
@@ -60,8 +58,9 @@ async def analyze(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail = f"Analysis failed: {str(e)}")
 
-@router.get("/load_unique_chord")
+@router.get("/load_unique_chord_url")
 async def load_unique_chord(chord):
+    """URL fetch for each chord endpoint"""
     try:
         # proxy to scrape
         # URL-encode the chord for the external API (for example, C# becomes C%23)
@@ -77,7 +76,7 @@ async def load_unique_chord(chord):
         }
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code != 200:
-            raise HTTPException(status_code=500, detail = f"Url fetch failed: status code {res.status_code}")
+            raise HTTPException(status_code=500, detail = f"[PRE-CACHE] URL fetch failed: status code {res.status_code}")
         soup = BeautifulSoup(res.text, "html.parser")
 
         comment = soup.find(string = lambda target: isinstance(target,Comment) and "main chord image" in target.lower())
@@ -88,10 +87,10 @@ async def load_unique_chord(chord):
             raise HTTPException(status_code=500, detail = "Div fetch failed: div element not found")
         img = div.find("img")
         if not img:
-            raise HTTPException(status_code=500, detail = "Chord image url fetch failed: img element not found")
+            raise HTTPException(status_code=500, detail = "Chord image URL fetch failed: img element not found")
         img_url = img.get("src")
         if not img_url:
-            raise HTTPException(status_code=500, detail = "Chord image url fetch failed: img src attribute not found")
+            raise HTTPException(status_code=500, detail = "Chord image URL fetch failed: img src attribute not found")
         if img_url.startswith("/"):
             img_url = "https://www.scales-chords.com" + img_url
         
@@ -100,10 +99,11 @@ async def load_unique_chord(chord):
             "img_url": img_url}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail = f"Chord fetch failed: {str(e)}")
+        raise HTTPException(status_code=500, detail = f"Chord URL fetch failed: {str(e)}")
 
-@router.get("/load_chord_images")
+@router.get("/load_chord_image_bytes")
 async def load_chord_images(url: str):
+    """Image bytes fetch for each chord endpoint"""
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -125,4 +125,4 @@ async def load_chord_images(url: str):
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chord image for cache failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Chord image bytes for cache failed: {str(e)}")
