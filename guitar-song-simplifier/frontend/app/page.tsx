@@ -6,7 +6,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export default function Home() {
   const [step, setStep] = useState<"upload" | "analyze" | "record" | null>(
-    null
+    null,
   );
   const [selected, setSelected] = useState<File | null>(null);
   const [upload, setUpload] = useState(false);
@@ -14,7 +14,26 @@ export default function Home() {
   const [analyze, setAnalyze] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [record, setRecord] = useState(false);
+  const [timerNum, setTimerNum] = useState(0);
   const [recording, setRecording] = useState(false);
+  const [count, setCountFinished] = useState(false);
+  // WebSocket and audio capture
+  const wsRef = useRef<WebSocket | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<any>(null);
+  const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const wsAudioEnabledRef = useRef(false);
+  const audioChunksSentRef = useRef(0);
+  // Real-time chord detection feedback
+  const [detectedChord, setDetectedChord] = useState<string | null>(null);
+  const [chordFeedback, setChordFeedback] = useState<{
+    status: string;
+    message: string;
+    timestamp: number;
+  } | null>(null);
   // for logging
   const [response, setRes] = useState<any>(null);
   // singular chords extracted from current song
@@ -24,7 +43,9 @@ export default function Home() {
   // sequence of times, chords extracted from current song
   const [sequence, setSequence] = useState<any>(null);
   // cached images for session
-  const [cachedImages, setCachedImages] = useState({});
+  const [cachedImages, setCachedImages] = useState<{ [key: string]: string }>(
+    {},
+  );
   // for intermediate message that images are getting fetched
   const [cacheing, setCacheing] = useState(false);
   // audio states
@@ -35,6 +56,9 @@ export default function Home() {
   const chordSequenceRef = useRef<HTMLDivElement>(null);
   const chordRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
+  useEffect(() => {
+    console.log("chord feedback: ", chordFeedback);
+  }, [chordFeedback]);
   // creates blob URL (temporary in-browser url)
   useEffect(() => {
     if (selected) {
@@ -75,7 +99,7 @@ export default function Home() {
     const times: [number, string][] = Object.entries(sequence)
       .map(
         ([time, chord]) =>
-          [parseFloat(time), chord as string] as [number, string]
+          [parseFloat(time), chord as string] as [number, string],
       )
       .sort(([a], [b]) => (a as number) - (b as number));
     let chordTime = 0;
@@ -91,29 +115,34 @@ export default function Home() {
     setChordTime(chordTime);
   }, [time, sequence]);
 
-  // scroll to current chord when it changes
-  useEffect(() => {
-    if (chordTime == null || !chordSequenceRef.current) return;
+// scroll to current chord when it changes
+useEffect(() => {
+  if (chordTime == null || !chordSequenceRef.current) return;
 
-    const chordElement = chordRefs.current[chordTime];
-    if (chordElement && chordSequenceRef.current) {
-      const container = chordSequenceRef.current;
-      const elementLeft = chordElement.offsetLeft;
-      const elementWidth = chordElement.offsetWidth;
-      const containerWidth = container.offsetWidth;
-      const scrollLeft = container.scrollLeft;
+  const chordElement = chordRefs.current[chordTime];
+  if (!chordElement || !chordSequenceRef.current) return;
 
-      const elementCenter = elementLeft + elementWidth / 2;
-      const containerCenter = scrollLeft + containerWidth / 2;
+  const container = chordSequenceRef.current;
+  
+  // Get positions
+  const containerLeft = container.scrollLeft;
+  const containerRight = containerLeft + container.offsetWidth;
+  const elementLeft = chordElement.offsetLeft;
+  const elementRight = elementLeft + chordElement.offsetWidth;
 
-      if (Math.abs(elementCenter - containerCenter) > containerWidth / 3) {
-        container.scrollTo({
-          left: elementCenter - containerWidth / 2,
-          behavior: "smooth",
-        });
-      }
-    }
-  }, [chordTime]);
+  // Check if element is completely out of frame
+  const isOutOfFrame = elementRight < containerLeft || elementLeft > containerRight;
+
+  if (isOutOfFrame) {
+    // Element is out of frame - scroll to bring it into view
+    // Position it at the left edge with a small padding
+    container.scrollTo({
+      left: elementLeft - 20, // 20px padding from left edge
+      behavior: 'smooth'
+    });
+  }
+  // If it's in frame (even partially), do nothing
+}, [chordTime]);
 
   // clears local storage upon refresh
   // useEffect (() =>{
@@ -126,8 +155,12 @@ export default function Home() {
 
   // adds bottom padding to body when chord diagrams pop up
   useEffect(() => {
-    if (step === "analyze" && uniqueChordInfo && cachedImages) {
-      document.body.style.paddingBottom = "400px";
+    if (
+      (step === "analyze" || step === "record") &&
+      uniqueChordInfo &&
+      cachedImages
+    ) {
+      document.body.style.paddingBottom = "1000px";
     } else {
       document.body.style.paddingBottom = "";
     }
@@ -223,7 +256,7 @@ export default function Home() {
       for (const chord of uniqueChords) {
         // proxy
         const res = await fetch(
-          `${API_URL}/load_unique_chord_url?chord=${encodeURIComponent(chord)}`
+          `${API_URL}/load_unique_chord_url?chord=${encodeURIComponent(chord)}`,
         );
         if (!res.ok) throw new Error("External API error");
         const result = await res.json();
@@ -259,7 +292,7 @@ export default function Home() {
           try {
             console.log(`${chord.chord} is NOT in local storage`);
             const res = await fetch(
-              `${API_URL}/load_chord_image_bytes?url=${encodeURIComponent(url)}`
+              `${API_URL}/load_chord_image_bytes?url=${encodeURIComponent(url)}`,
             );
             const blob = await res.blob();
             const reader = new FileReader();
@@ -284,13 +317,383 @@ export default function Home() {
     loadIntoCache();
   }, [uniqueChordInfo]);
 
-  // handle recording
-  const handleRecord = () => {
+  // Stop recording and cleanup
+  const stopRecording = () => {
+    if (audioRef.current?.paused === false) {
+      audioRef.current.pause();
+    }
+
+    // Clear connection timeout so it doesn't fire after we've stopped
+    if (connectionTimeoutRef.current) {
+      clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
+    }
+    wsAudioEnabledRef.current = false;
+    audioChunksSentRef.current = 0;
+
+    // 1) Stop microphone and audio pipeline first so we don't keep recording
+    if (processorRef.current) {
+      try {
+        processorRef.current.disconnect();
+      } catch (_) {}
+      processorRef.current = null;
+    }
+
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+    console.log("Closing mic in stopRecording()");
+
+    // 2) Then close WebSocket cleanly
+    if (wsRef.current) {
+      const ws = wsRef.current;
+      wsRef.current = null;
+      console.log("Closing WebSocket, state:", ws.readyState);
+
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: "stop" }));
+        } catch (_) {}
+      }
+      try {
+        ws.close(1000, "Recording stopped");
+      } catch (_) {}
+      console.log("WebSocket cleaned up");
+    }
+
+    setRecording(false);
+    setDetectedChord(null);
+    setChordFeedback(null);
+    setCountFinished(false);
+  };
+
+  // start countdown before recording
+  const startCountdown = () => {
+    console.log("starting countdown");
+    setTimerNum(3);
+    const intervalId = setInterval(() => {
+      setTimerNum((prev) => {
+        if (prev <= 1) {
+          clearInterval(intervalId);
+          setTimeout(actualRecord, 100);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    setCountFinished(true);
+  };
+
+  // handle record button press
+  const handleRecord = async () => {
     console.log("handleRecord");
+    if (wsRef.current || recording) {
+      stopRecording();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return;
+    }
+
+    if (!sequence || !uniqueChords) {
+      alert("Please analyze a song first!");
+      return;
+    }
 
     setStep("record");
     setRecord(true);
+    setTime(0);
+    setChordTime(0);
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+      stream.getTracks().forEach((track) => track.stop());
+
+      console.log("Microphone permission granted");
+      startCountdown();
+    } catch (error) {
+      console.error("Error accessing microphone:", error);
+      alert("Could not access microphone. Please grant permission.");
+      stopRecording();
+    }
   };
+
+  // handle actual recording
+  const actualRecord = async () => {
+    setRecording(true);
+
+    try {
+      // Get WebSocket URL (replace http/https with ws/wss)
+      let wsUrl = API_URL || "http://localhost:8000";
+
+      // Handle URL conversion properly
+      if (wsUrl.startsWith("http://")) {
+        wsUrl = wsUrl.replace("http://", "ws://");
+      } else if (wsUrl.startsWith("https://")) {
+        wsUrl = wsUrl.replace("https://", "wss://");
+      } else if (!wsUrl.startsWith("ws://") && !wsUrl.startsWith("wss://")) {
+        // If no protocol, assume http and convert to ws
+        wsUrl = `ws://${wsUrl}`;
+      }
+
+      // Remove trailing slash if present
+      wsUrl = wsUrl.replace(/\/$/, "");
+
+      const wsEndpoint = `${wsUrl}/ws/record`;
+      console.log("Connecting to WebSocket:", wsEndpoint);
+
+      const ws = new WebSocket(wsEndpoint);
+      wsRef.current = ws;
+
+      // Set a connection timeout (stored in ref so stopRecording can clear it)
+      connectionTimeoutRef.current = setTimeout(() => {
+        connectionTimeoutRef.current = null;
+        if (ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+          alert(
+            `WebSocket connection timeout.\n\n` +
+              `Could not connect to: ${wsEndpoint}\n\n` +
+              `Please verify:\n` +
+              `1. Backend is running and accessible\n` +
+              `2. WebSocket endpoint is correct\n` +
+              `3. No firewall is blocking the connection`,
+          );
+          setRecording(false);
+        }
+      }, 10000);
+
+      ws.onopen = async () => {
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+        console.log("WebSocket connected");
+
+        // Send init with default sample rate; we'll send actual rate after AudioContext is created
+        ws.send(
+          JSON.stringify({
+            type: "init",
+            chord_sequence: sequence,
+            unique_chords: uniqueChords,
+            category: "MirexMajMin",
+            sample_rate: 44100,
+          }),
+        );
+
+        try {
+          // Request mic and build audio graph inside onopen so stream stays live for the whole recording
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              channelCount: 1,
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          });
+
+          if (wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) {
+            stream.getTracks().forEach((t) => t.stop());
+            return;
+          }
+
+          mediaStreamRef.current = stream;
+
+          const AudioContextCtor =
+            window.AudioContext || (window as any).webkitAudioContext;
+          const audioContext = new AudioContextCtor();
+          audioContextRef.current = audioContext;
+
+          const actualSampleRate = audioContext.sampleRate;
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(
+              JSON.stringify({
+                type: "sample_rate",
+                sample_rate: actualSampleRate,
+              }),
+            );
+          }
+
+          const source = audioContext.createMediaStreamSource(stream);
+          const bufferSize = 16384;
+          const processor = (audioContext as any).createScriptProcessor(
+            bufferSize,
+            1,
+            1,
+          );
+          processorRef.current = processor;
+          wsAudioEnabledRef.current = false;
+
+          processor.onaudioprocess = (e: AudioProcessingEvent) => {
+            if (
+              !wsAudioEnabledRef.current ||
+              ws.readyState !== WebSocket.OPEN
+            ) {
+              return;
+            }
+            const inputData = e.inputBuffer.getChannelData(0);
+            const int16Data = new Int16Array(inputData.length);
+            for (let i = 0; i < inputData.length; i++) {
+              const s = Math.max(-1, Math.min(1, inputData[i]));
+              int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            }
+            ws.send(int16Data.buffer);
+          };
+
+          source.connect(processor);
+          processor.connect(audioContext.destination);
+          console.log("Mic and audio graph ready; waiting for server ready...");
+        } catch (error) {
+          console.error("Error accessing microphone:", error);
+          alert("Could not access microphone. Please grant permission.");
+          stopRecording();
+        }
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === "ready") {
+            console.log("Server ready to process audio");
+            wsAudioEnabledRef.current = true;
+          } else if (data.type === "chord_detected") {
+            setDetectedChord(data.chord);
+            setChordFeedback({
+              status: data.status,
+              message: data.message,
+              timestamp: data.timestamp,
+            });
+            console.log("Chord detected:", data);
+          } else if (data.type === "error") {
+            console.error("Server error:", data.message);
+            alert(`Server Error: ${data.message}`);
+            console.log(
+              "entering stop recording in actualRecord after server error",
+            );
+
+            stopRecording();
+          }
+        } catch (error) {
+          console.error("Error parsing WebSocket message:", error);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+        // Don't show alert on error - onclose will handle it
+      };
+
+      ws.onclose = async (event) => {
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+        console.log("WebSocket closed", event.code, event.reason);
+        if (recording && event.code !== 1000) {
+          // Only alert if it was an unexpected close (not a normal close)
+          let errorMsg = `Connection closed`;
+          if (event.code === 1006) {
+            // Connection refused - server likely not running
+            const healthUrl = API_URL || "http://localhost:8000";
+            let serverStatus = "Unknown";
+            try {
+              const healthCheck = await fetch(`${healthUrl}/health`, {
+                method: "GET",
+                signal: AbortSignal.timeout(3000),
+              });
+              serverStatus = healthCheck.ok ? "Running" : "Not responding";
+            } catch (e) {
+              serverStatus = "Not accessible";
+            }
+
+            errorMsg =
+              `❌ Cannot connect to WebSocket server!\n\n` +
+              `WebSocket URL: ${wsEndpoint}\n` +
+              `Backend Status: ${serverStatus}\n\n` +
+              `🔧 Troubleshooting Steps:\n\n` +
+              `1. Start the backend server:\n` +
+              `   cd guitar-song-simplifier/backend\n` +
+              `   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload\n\n` +
+              `   OR if using Docker:\n` +
+              `   docker-compose up backend\n\n` +
+              `2. Verify the server is running:\n` +
+              `   - Open: ${healthUrl}/health\n` +
+              `   - Should return: {"status":"healthy",...}\n\n` +
+              `3. Check your environment:\n` +
+              `   - NEXT_PUBLIC_API_URL=${API_URL || "not set (defaults to http://localhost:8000)"}\n\n` +
+              `4. Check the backend terminal for errors`;
+          } else if (event.reason) {
+            errorMsg = `Connection closed: ${event.reason}`;
+          }
+          alert(errorMsg);
+        }
+        console.log("entering stop recording in actualRecord in try");
+
+        stopRecording();
+      };
+    } catch (error) {
+      console.error("Error starting recording:", error);
+      alert("Failed to start recording. Please try again.");
+      console.log(
+        "entering stop recording in actualRecord after failing to start recoridng",
+      );
+
+      stopRecording();
+    }
+  };
+
+  const playAfterCountdown = async () => {
+    if (count === true) {
+      if (audioRef.current) {
+        audioRef.current.play();
+        audioRef.current.muted = true;
+      }
+    }
+  };
+
+  useEffect(() => {
+    // console.log("countdown value: ", count)
+    setTimeout(playAfterCountdown, 3000);
+  }, [count]);
+
+  // useEffect(()=>{
+  //   console.log("debug: ", {
+  //     step,
+  //     recording,
+  //     // literal time in the track
+  //     audioTime: audioRef.current?.currentTime,
+  //     // time at which certain chord should be played
+  //     chordTime,
+  //     audioPaused: audioRef.current?.paused,
+  //     audioSrc: audioRef.current?.src,
+  //     // time at which chord was actually played
+  //     timestamp: chordFeedback?.timestamp,
+  //     message: chordFeedback?.message
+  //   });
+  // }, [step, recording, chordTime, time, chordFeedback?.timestamp, chordFeedback?.message])
 
   return (
     <div>
@@ -334,7 +737,7 @@ export default function Home() {
 
             <button
               onClick={handleAnalyze}
-              disabled={!upload || uploading}
+              disabled={!upload || uploading || recording}
               className={`rounded-full px-5 py-3 font-medium ${
                 upload && !uploading
                   ? "bg-gray-200 hover:bg-gray-300 text-black"
@@ -349,23 +752,101 @@ export default function Home() {
               disabled={!analyze || analyzing || cacheing}
               className={`rounded-full px-5 py-3 font-medium ${
                 analyze && !analyzing && !cacheing
-                  ? "bg-gray-200 hover:bg-gray-300 text-black"
+                  ? recording
+                    ? "bg-red-500 hover:bg-red-600 text-white"
+                    : "bg-gray-200 hover:bg-gray-300 text-black"
                   : "bg-gray-400 cursor-not-allowed text-gray-200"
               }`}
             >
-              Record Yourself
+              {recording ? "Stop Recording" : "Start Recording"}
             </button>
           </div>
         </main>
 
         {/* UI Changes for Each Step */}
+
         <div className="w-full max-w-2xl p-6 rounded-xl shadow-md text-center transition-all duration-300">
           {step == "upload" && <p>File Uploaded!</p>}
 
-          {step == "record" && <p>Recorded!</p>}
+          {step == "record" && (
+            <div className="w-full max-w-2xl p-6 rounded-xl shadow-md">
+              {/* Countdown */}
+              <div className="text-center mb-6 p-4 bg-gray-800/50 rounded-lg">
+                {timerNum > 0 && <p> Recording starting in {timerNum} ... </p>}
+              </div>
 
-          {step === "analyze" && uniqueChordInfo && (
+              {recording ? (
+                <div className="space-y-6">
+                  {/* SHOWS DETECTED CHORD AND FEEDBACK */}
+                  <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
+                    {" "}
+                    <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                    <p className="text-gray-300">Recording...</p>
+                  </div>
+
+                  {detectedChord && (
+                    <div className="p-4 rounded-lg bg-gray-800">
+                      <p className="text-lg font-semibold text-gray-200 mb-2">
+                        Detected Chord:{" "}
+                        <span className="text-blue-400">{detectedChord}</span>
+                      </p>
+
+                      {chordFeedback && (
+                        <div
+                          className={`p-3 rounded ${
+                            chordFeedback.status === "good"
+                              ? "bg-green-600/30 border border-green-500"
+                              : chordFeedback.status === "wrong_chord" ||
+                                  chordFeedback.status === "wrong"
+                                ? "bg-red-600/30 border border-red-500"
+                                : chordFeedback.status === "too_early" ||
+                                    chordFeedback.status === "too_late"
+                                  ? "bg-yellow-600/30 border border-yellow-500"
+                                  : "bg-gray-700 border border-gray-600"
+                          }`}
+                        >
+                          <p
+                            className={`font-medium ${
+                              chordFeedback.status === "good"
+                                ? "text-green-300"
+                                : chordFeedback.status === "wrong_chord" ||
+                                    chordFeedback.status === "wrong"
+                                  ? "text-red-300"
+                                  : chordFeedback.status === "too_early" ||
+                                      chordFeedback.status === "too_late"
+                                    ? "text-yellow-300"
+                                    : "text-gray-300"
+                            }`}
+                          >
+                            {chordFeedback.message}
+                          </p>
+                          <p className="text-sm text-gray-400 mt-1">
+                            Time:{" "}
+                            {Math.floor(
+                              Number(chordFeedback.timestamp.toFixed(2)) / 60,
+                            )}
+                            min{" "}
+                            {Math.floor(
+                              Number(chordFeedback.timestamp.toFixed(2)) % 60,
+                            )}
+                            s
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-gray-300">
+                  Click "Start Recording" to start real-time chord detection.
+                </p>
+              )}
+            </div>
+          )}
+
+          {(step === "analyze" || step === "record") && uniqueChordInfo && (
             <div className="fixed bottom-0 left-0 right-0 bg-white-900/95 backdrop-blur-sm border-t border-white-700 p-4 z-50">
+              {/* recording sound bar */}
               {audioURL && (
                 <div className="mb-6 flex flex-col items-center gap-2">
                   <audio
@@ -377,8 +858,10 @@ export default function Home() {
                 </div>
               )}
 
-              <div className="flex flex-col lg:flex-row items-start gap-6">
-                <div className="lg:w-1/2 ">
+              {/* Big container for chord diagrams during analysis */}
+              <div className="flex flex-col items-start gap-6">
+                {/* general chords */}
+                <div className="w-full ">
                   <h3 className="text-center mb-4 font-mono text-lg text-gray-200">
                     Chords You Have to Know
                   </h3>
@@ -403,7 +886,8 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="lg:w-1/2 ">
+                <div className="w-full">
+                  {/* chord sequence */}
                   <h3 className="text-center mb-4 font-mono text-lg text-gray-200">
                     Your Chord Sequence
                   </h3>
@@ -418,8 +902,8 @@ export default function Home() {
                           [parseFloat(time), time, chord] as [
                             number,
                             string,
-                            string
-                          ]
+                            string,
+                          ],
                       )
                       // sorts in ascending order just in case
                       .sort(([a], [b]) => a - b)
@@ -427,7 +911,7 @@ export default function Home() {
                       .map(([numTime, time, chord]) => {
                         // finds url for each chord for diagram display (including fallback)
                         const info = uniqueChordInfo.find(
-                          (i) => i.chord === chord
+                          (i: any) => i.chord === chord,
                         );
                         const url = info?.img_url;
                         // boolean to trigger if current chord is the one the audio is playing through
@@ -435,6 +919,21 @@ export default function Home() {
                         const isCurrentChord =
                           chordTime !== null &&
                           Math.abs(chordTime - numTime) < 0.1;
+
+                        const minutes = Math.floor(numTime / 60);
+                        const remainder = Math.ceil(numTime % 60);
+                        var newTime =
+                          String(minutes) +
+                          " min " +
+                          String(remainder) +
+                          " sec";
+                        if (minutes == 0) {
+                          newTime = String(remainder) + " sec";
+                        }
+                        if (remainder == 0) {
+                          newTime = String(minutes) + " min ";
+                        }
+
                         return (
                           <div
                             key={time}
@@ -448,7 +947,7 @@ export default function Home() {
                             }`}
                           >
                             <p className="font-mono text-sm text-gray-300 font-medium">
-                              {time}
+                              {newTime}
                             </p>
 
                             <img

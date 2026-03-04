@@ -47,8 +47,8 @@ COPY loaded_song_combo.py .
 COPY realtime_combo.py .
 COPY complex_realtime_chords/ ./complex_realtime_chords/
 
-# Install FastAPI dependencies
-RUN pip install fastapi uvicorn python-multipart
+# Install FastAPI dependencies with WebSocket support
+RUN pip install fastapi "uvicorn[standard]" python-multipart websockets
 
 # Expose port
 EXPOSE 8000

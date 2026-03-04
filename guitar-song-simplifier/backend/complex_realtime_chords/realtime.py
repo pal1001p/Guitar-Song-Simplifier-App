@@ -57,6 +57,7 @@ def process_audio_chunk(audio_data, sr=44100, target_sr=11025):
     return X
 
 def find_closest_match(timestamp):
+    """Uses global chord_sequence (for PyAudio callback)."""
     list_times = list(chord_sequence.keys())
     # binary search
     # returns index of where it would fit in (sorted) list
@@ -73,6 +74,39 @@ def find_closest_match(timestamp):
         return after, chord_sequence[after]
     else:
         return before, chord_sequence[before]
+
+
+def find_closest_match_for_sequence(timestamp, chord_sequence_dict):
+    """
+    Find closest chord in sequence for a given timestamp.
+    Accepts chord_sequence with string or numeric keys (e.g. from JSON).
+    Returns (closest_timestamp, expected_chord) or (None, None) if empty.
+    """
+    if not chord_sequence_dict:
+        return None, None
+    # JSON keys are strings; convert to float for comparison
+    list_times = sorted([float(k) for k in chord_sequence_dict.keys()])
+    index = bisect.bisect_left(list_times, timestamp)
+    if index == 0:
+        t = list_times[0]
+        return t, chord_sequence_dict.get(str(t), chord_sequence_dict.get(t))
+    if index == len(list_times):
+        t = list_times[-1]
+        return t, chord_sequence_dict.get(str(t), chord_sequence_dict.get(t))
+    before = list_times[index - 1]
+    after = list_times[index]
+    if after - timestamp < timestamp - before:
+        return after, chord_sequence_dict.get(str(after), chord_sequence_dict.get(after))
+    return before, chord_sequence_dict.get(str(before), chord_sequence_dict.get(before))
+
+
+def get_weights_path_absolute(category, base_dir):
+    """Return absolute path to model weights for API/server use."""
+    rel = get_weights_path_by_category(category)
+    if rel is None:
+        return None
+    from pathlib import Path
+    return str(Path(base_dir) / rel)
 
 def callback(in_data, frame_count, time_info, flag):
     """Audio callback function for real-time processing"""

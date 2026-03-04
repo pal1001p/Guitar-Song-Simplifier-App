@@ -15,5 +15,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(routes.router)
+# Include router with all endpoints (including WebSocket)
+app.include_router(routes.router, tags=["api"])
+
+# Print registered routes on startup (for debugging)
+print("\n" + "="*50)
+print("Registered API Routes:")
+print("="*50)
+for route in app.routes:
+    if hasattr(route, 'path'):
+        route_type = "WebSocket" if hasattr(route, 'endpoint') and 'websocket' in str(type(route)).lower() else (route.methods if hasattr(route, 'methods') else 'Unknown')
+        print(f"  {route_type}: {route.path}")
+print("="*50 + "\n")
 
