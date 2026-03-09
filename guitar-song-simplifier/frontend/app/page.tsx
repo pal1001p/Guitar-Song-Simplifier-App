@@ -17,6 +17,10 @@ export default function Home() {
   const [timerNum, setTimerNum] = useState(0);
   const [recording, setRecording] = useState(false);
   const [count, setCountFinished] = useState(false);
+  const [accuracy, setAccuracy] = useState(0)
+  const [correct, setCorrect] = useState(0)
+  const [sofar, setChordsSoFar] = useState(0)
+  const [progress, setProgress] = useState(0)
   // WebSocket and audio capture
   const wsRef = useRef<WebSocket | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -373,6 +377,10 @@ useEffect(() => {
     }
 
     setRecording(false);
+    // setAccuracy(0)
+    // setCorrect(0)
+    // setChordsSoFar(0)
+    // setProgress(0)
     setDetectedChord(null);
     setChordFeedback(null);
     setCountFinished(false);
@@ -413,6 +421,10 @@ useEffect(() => {
     setRecord(true);
     setTime(0);
     setChordTime(0);
+    setAccuracy(0)
+    setCorrect(0)
+    setChordsSoFar(0)
+    setProgress(0)
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
     }
@@ -583,6 +595,13 @@ useEffect(() => {
               timestamp: data.timestamp,
             });
             console.log("Chord detected:", data);
+            // if (data.status === 'good'){
+            //   console.log("          GOOD CHORD")
+            //   var og = correct
+            //   og += 1
+            //   setCorrect(og)
+            // }
+
           } else if (data.type === "error") {
             console.error("Server error:", data.message);
             alert(`Server Error: ${data.message}`);
@@ -678,6 +697,37 @@ useEffect(() => {
     // console.log("countdown value: ", count)
     setTimeout(playAfterCountdown, 3000);
   }, [count]);
+
+  useEffect(()=>{
+    if(chordFeedback?.status == 'good'){
+      setCorrect((correct + 1))
+    }
+    if(chordFeedback?.status == 'wrong_chord' || chordFeedback?.status == 'wrong'){
+      setCorrect((correct - 0.2))
+    }
+    if(chordFeedback?.status == 'too_early' || chordFeedback?.status == 'too_late'){
+      setCorrect((correct - 0.1))
+    }
+  },[chordFeedback])
+
+  // up to what you should have played so far
+  useEffect(()=>{
+    setChordsSoFar(sofar + 1)
+  }, [chordTime])
+
+  useEffect(()=>{
+    
+      setAccuracy((correct / sofar)*100)
+    
+    if (sequence){
+      setProgress((sofar / Object.keys(sequence).length)*100)
+    }
+  }, [correct,sofar])
+
+
+  useEffect(()=>{
+    console.log("correct", correct)
+  }, [correct], )
 
   // useEffect(()=>{
   //   console.log("debug: ", {
@@ -782,7 +832,21 @@ useEffect(() => {
                     {" "}
                     <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
                     <p className="text-gray-300">Recording...</p>
+                    
                   </div>
+
+                  {accuracy || progress && (
+                    <div className="p-4 rounded-lg bg-gray-800">
+                      <p className="text-lg font-semibold text-gray-200 mb-2">
+                        <span className="text-blue-400">Progress: {Math.round(progress)}%</span>
+                        <p>
+                        </p>
+                        <span className="text-blue-400">Accuracy: {Math.round(accuracy)}%</span>
+
+                      </p>
+                    </div>
+                  )}
+                  
 
                   {detectedChord && (
                     <div className="p-4 rounded-lg bg-gray-800">
@@ -809,6 +873,7 @@ useEffect(() => {
                             className={`font-medium ${
                               chordFeedback.status === "good"
                                 ? "text-green-300"
+                                // correct += 1
                                 : chordFeedback.status === "wrong_chord" ||
                                     chordFeedback.status === "wrong"
                                   ? "text-red-300"

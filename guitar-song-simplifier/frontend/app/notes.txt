@@ -1,0 +1,4 @@
+
+accuracy tracker (correct chords hit out of total chords needed to be played)
+
+keep playback of users own recording as well
