@@ -287,7 +287,7 @@ async def websocket_record(websocket: WebSocket):
                 # Convert bytes to numpy array (int16 PCM)
                 audio_data = np.frombuffer(audio_bytes, dtype=np.int16)
                 rms = float(np.sqrt(np.mean(audio_data.astype(np.float32) ** 2)))
-                print(f"[ws {connection_id}] audio rms={rms}")
+                # print(f"[ws {connection_id}] audio rms={rms}")
                 
                 if len(audio_data) == 0:
                     continue
@@ -328,7 +328,7 @@ async def websocket_record(websocket: WebSocket):
                                 f"sr={sample_rate} "
                                 f"pred={current_chord}"
                             )
-                        
+                        # need to change likely
                         timestamp = time.time() - conn_state['start_time']
                         # print("previous chord", conn_state['prev_chord'])
                         # Only send update if chord changed and is not "N" (no chord)

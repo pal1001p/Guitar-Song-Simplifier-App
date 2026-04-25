@@ -17,10 +17,11 @@ export default function Home() {
   const [timerNum, setTimerNum] = useState(0);
   const [recording, setRecording] = useState(false);
   const [count, setCountFinished] = useState(false);
-  const [accuracy, setAccuracy] = useState(0)
-  const [correct, setCorrect] = useState(0)
-  const [sofar, setChordsSoFar] = useState(0)
-  const [progress, setProgress] = useState(0)
+  const [accuracy, setAccuracy] = useState(0);
+  const [correct, setCorrect] = useState(0);
+  const [sofar, setChordsSoFar] = useState(0);
+  const [progress, setProgress] = useState(0);
+  const [times, setTimes] = useState<[number, string][]>([]);
   // WebSocket and audio capture
   const wsRef = useRef<WebSocket | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -55,8 +56,10 @@ export default function Home() {
   // audio states
   const [audioURL, setAudioURL] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const [time, setTime] = useState<number>(0);
-  const [chordTime, setChordTime] = useState<number>(0);
+  // timing
+  const [time, setTime] = useState(0);
+  const [chordTime, setChordTime] = useState(0);
+  const prevChordTime = useRef(chordTime);
   const chordSequenceRef = useRef<HTMLDivElement>(null);
   const chordRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
@@ -106,6 +109,7 @@ export default function Home() {
           [parseFloat(time), chord as string] as [number, string],
       )
       .sort(([a], [b]) => (a as number) - (b as number));
+    setTimes(times)
     let chordTime = 0;
 
     // now sorted for sure, so iterate backwards
@@ -119,34 +123,35 @@ export default function Home() {
     setChordTime(chordTime);
   }, [time, sequence]);
 
-// scroll to current chord when it changes
-useEffect(() => {
-  if (chordTime == null || !chordSequenceRef.current) return;
+  // scroll to current chord when it changes
+  useEffect(() => {
+    if (chordTime == null || !chordSequenceRef.current) return;
 
-  const chordElement = chordRefs.current[chordTime];
-  if (!chordElement || !chordSequenceRef.current) return;
+    const chordElement = chordRefs.current[chordTime];
+    if (!chordElement || !chordSequenceRef.current) return;
 
-  const container = chordSequenceRef.current;
-  
-  // Get positions
-  const containerLeft = container.scrollLeft;
-  const containerRight = containerLeft + container.offsetWidth;
-  const elementLeft = chordElement.offsetLeft;
-  const elementRight = elementLeft + chordElement.offsetWidth;
+    const container = chordSequenceRef.current;
 
-  // Check if element is completely out of frame
-  const isOutOfFrame = elementRight < containerLeft || elementLeft > containerRight;
+    // Get positions
+    const containerLeft = container.scrollLeft;
+    const containerRight = containerLeft + container.offsetWidth;
+    const elementLeft = chordElement.offsetLeft;
+    const elementRight = elementLeft + chordElement.offsetWidth;
 
-  if (isOutOfFrame) {
-    // Element is out of frame - scroll to bring it into view
-    // Position it at the left edge with a small padding
-    container.scrollTo({
-      left: elementLeft - 20, // 20px padding from left edge
-      behavior: 'smooth'
-    });
-  }
-  // If it's in frame (even partially), do nothing
-}, [chordTime]);
+    // Check if element is completely out of frame
+    const isOutOfFrame =
+      elementRight < containerLeft || elementLeft > containerRight;
+
+    if (isOutOfFrame) {
+      // Element is out of frame - scroll to bring it into view
+      // Position it at the left edge with a small padding
+      container.scrollTo({
+        left: elementLeft - 20, // 20px padding from left edge
+        behavior: "smooth",
+      });
+    }
+    // If it's in frame (even partially), do nothing
+  }, [chordTime]);
 
   // clears local storage upon refresh
   // useEffect (() =>{
@@ -181,6 +186,9 @@ useEffect(() => {
     setStep("upload");
     setUpload(true);
     setAnalyze(false);
+    if (recording == true) {
+      stopRecording();
+    }
     setRecord(false);
 
     if (!selected) return;
@@ -216,6 +224,10 @@ useEffect(() => {
   // analyzes file
   const handleAnalyze = async () => {
     console.log("handleAnalyze");
+    if (recording == true) {
+      stopRecording();
+    }
+    setRecord(false);
 
     setStep("analyze");
     setAnalyze(true);
@@ -377,10 +389,10 @@ useEffect(() => {
     }
 
     setRecording(false);
-    // setAccuracy(0)
-    // setCorrect(0)
-    // setChordsSoFar(0)
-    // setProgress(0)
+    setAccuracy(0);
+    setCorrect(0);
+    setChordsSoFar(0);
+    setProgress(0);
     setDetectedChord(null);
     setChordFeedback(null);
     setCountFinished(false);
@@ -421,10 +433,10 @@ useEffect(() => {
     setRecord(true);
     setTime(0);
     setChordTime(0);
-    setAccuracy(0)
-    setCorrect(0)
-    setChordsSoFar(0)
-    setProgress(0)
+    // setAccuracy(0)
+    // setCorrect(0)
+    // setChordsSoFar(0)
+    // setProgress(0)
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
     }
@@ -595,13 +607,6 @@ useEffect(() => {
               timestamp: data.timestamp,
             });
             console.log("Chord detected:", data);
-            // if (data.status === 'good'){
-            //   console.log("          GOOD CHORD")
-            //   var og = correct
-            //   og += 1
-            //   setCorrect(og)
-            // }
-
           } else if (data.type === "error") {
             console.error("Server error:", data.message);
             alert(`Server Error: ${data.message}`);
@@ -694,40 +699,61 @@ useEffect(() => {
   };
 
   useEffect(() => {
-    // console.log("countdown value: ", count)
     setTimeout(playAfterCountdown, 3000);
   }, [count]);
 
-  useEffect(()=>{
-    if(chordFeedback?.status == 'good'){
-      setCorrect((correct + 1))
+  useEffect(() => {
+    if (audioRef.current && audioRef.current.paused) {
+      stopRecording();
     }
-    if(chordFeedback?.status == 'wrong_chord' || chordFeedback?.status == 'wrong'){
-      setCorrect((correct - 0.2))
+  }, [audioRef.current]);
+
+  useEffect(() => {
+    if (chordFeedback?.status == "good") {
+      setCorrect(correct + 1);
     }
-    if(chordFeedback?.status == 'too_early' || chordFeedback?.status == 'too_late'){
-      setCorrect((correct - 0.1))
+  }, [chordFeedback]);
+
+  // // up to what you should have played so far
+  useEffect(() => {
+    // const prev = prevChordTime.current
+    // if (chordTime > prev){
+    //   setChordsSoFar(sofar + 1);
+    // }
+    // prevChordTime.current = chordTime
+
+    // setChordsSoFar(sofar + 1);
+    const index = times.findIndex(([t]) => t === chordTime);
+
+    setChordsSoFar(index+1)
+  }, [chordTime]);
+
+  useEffect(() => {
+    const prev = prevChordTime.current
+    // if user scrolled back or too far forwards , reset accuracy to 0
+    if (times.findIndex(([t]) => t === chordTime) > sofar + 1){
+      setAccuracy(0)
+    } else{
+    setAccuracy((correct / sofar) * 100);
     }
-  },[chordFeedback])
 
-  // up to what you should have played so far
-  useEffect(()=>{
-    setChordsSoFar(sofar + 1)
-  }, [chordTime])
-
-  useEffect(()=>{
-    
-      setAccuracy((correct / sofar)*100)
-    
-    if (sequence){
-      setProgress((sofar / Object.keys(sequence).length)*100)
+    if (sequence) {
+      setProgress((sofar / Object.keys(sequence).length) * 100);
     }
-  }, [correct,sofar])
+    prevChordTime.current = chordTime
+  }, [correct, sofar, chordTime]);
 
+  useEffect(() => {
+    console.log("correct", correct);
+  }, [correct]);
 
-  useEffect(()=>{
-    console.log("correct", correct)
-  }, [correct], )
+  useEffect(() => {
+    console.log("accuracy", accuracy);
+  }, [accuracy]);
+
+  useEffect(() => {
+    console.log("progress", progress);
+  }, [progress]);
 
   // useEffect(()=>{
   //   console.log("debug: ", {
@@ -787,7 +813,7 @@ useEffect(() => {
 
             <button
               onClick={handleAnalyze}
-              disabled={!upload || uploading || recording}
+              disabled={!upload || uploading}
               className={`rounded-full px-5 py-3 font-medium ${
                 upload && !uploading
                   ? "bg-gray-200 hover:bg-gray-300 text-black"
@@ -832,21 +858,18 @@ useEffect(() => {
                     {" "}
                     <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
                     <p className="text-gray-300">Recording...</p>
-                    
-                  </div>
-
-                  {accuracy || progress && (
                     <div className="p-4 rounded-lg bg-gray-800">
                       <p className="text-lg font-semibold text-gray-200 mb-2">
-                        <span className="text-blue-400">Progress: {Math.round(progress)}%</span>
-                        <p>
-                        </p>
-                        <span className="text-blue-400">Accuracy: {Math.round(accuracy)}%</span>
-
+                        <span className="text-blue-400">
+                          Progress: {Math.round(progress)}%
+                        </span>
+                        <p></p>
+                        <span className="text-blue-400">
+                          Accuracy: {Math.round(accuracy)}%
+                        </span>
                       </p>
-                    </div>
-                  )}
-                  
+                    </div> 
+                  </div>
 
                   {detectedChord && (
                     <div className="p-4 rounded-lg bg-gray-800">
@@ -873,8 +896,8 @@ useEffect(() => {
                             className={`font-medium ${
                               chordFeedback.status === "good"
                                 ? "text-green-300"
-                                // correct += 1
-                                : chordFeedback.status === "wrong_chord" ||
+                                : // correct += 1
+                                  chordFeedback.status === "wrong_chord" ||
                                     chordFeedback.status === "wrong"
                                   ? "text-red-300"
                                   : chordFeedback.status === "too_early" ||
@@ -909,12 +932,13 @@ useEffect(() => {
             </div>
           )}
 
-          {(step === "analyze" || step === "record") && uniqueChordInfo && (
+          {(step == "analyze" || step == "record") && uniqueChordInfo && (
             <div className="fixed bottom-0 left-0 right-0 bg-white-900/95 backdrop-blur-sm border-t border-white-700 p-4 z-50">
               {/* recording sound bar */}
-              {audioURL && (
+              {audioURL && (step === "analyze" || step === "record") && (
                 <div className="mb-6 flex flex-col items-center gap-2">
                   <audio
+                    key="native"
                     ref={audioRef}
                     src={audioURL}
                     controls
@@ -922,7 +946,6 @@ useEffect(() => {
                   />
                 </div>
               )}
-
               {/* Big container for chord diagrams during analysis */}
               <div className="flex flex-col items-start gap-6">
                 {/* general chords */}
