@@ -8,20 +8,20 @@ export default function Home() {
   const [step, setStep] = useState<"upload" | "analyze" | "record" | null>(
     null,
   );
+  // steps
   const [selected, setSelected] = useState<File | null>(null);
   const [upload, setUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [analyze, setAnalyze] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
-  const [record, setRecord] = useState(false);
-  const [timerNum, setTimerNum] = useState(0);
+  const [timerNum, setCurrentAudioTimerNum] = useState(0);
   const [recording, setRecording] = useState(false);
+  // recording-specific states
   const [count, setCountFinished] = useState(false);
   const [accuracy, setAccuracy] = useState(0);
   const [correct, setCorrect] = useState(0);
   const [sofar, setChordsSoFar] = useState(0);
   const [progress, setProgress] = useState(0);
-  const [times, setTimes] = useState<[number, string][]>([]);
   // WebSocket and audio capture
   const wsRef = useRef<WebSocket | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -39,33 +39,35 @@ export default function Home() {
     message: string;
     timestamp: number;
   } | null>(null);
-  // for logging
-  const [response, setRes] = useState<any>(null);
   // singular chords extracted from current song
   const [uniqueChords, setUniqueChords] = useState<any>(null);
   // urls for chords extracted from current song
-  const [uniqueChordInfo, setuniqueChordInfo] = useState<any>(null);
-  // sequence of times, chords extracted from current song
+  const [uniqueChordURLs, setuniqueChordURLs] = useState<any>(null);
+  // sequence of times to chords extracted from current song
   const [sequence, setSequence] = useState<any>(null);
+  const [timesToChords, setTimesToChords] = useState<[number, string][]>([]);
   // cached images for session
-  const [cachedImages, setCachedImages] = useState<{ [key: string]: string }>(
-    {},
-  );
+  const [cachedImages, setCachedImages] = useState<{ [key: string]: string }>({},);
   // for intermediate message that images are getting fetched
   const [cacheing, setCacheing] = useState(false);
-  // audio states
+  // audio states for sound bars
   const [audioURL, setAudioURL] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  // timing
-  const [time, setTime] = useState(0);
+  const [isPlaybackMuted, setIsPlaybackMuted] = useState(true);
+  const [playbackVolume, setPlaybackVolume] = useState(1);
+  const [audioDuration, setAudioDuration] = useState(0);
+  // time in the audio bar
+  const [currentAudioTime, setCurrentAudioTime] = useState(0);
+  // time for a certain chord (from sequence)
   const [chordTime, setChordTime] = useState(0);
-  const prevChordTime = useRef(chordTime);
+  // chord display states
   const chordSequenceRef = useRef<HTMLDivElement>(null);
   const chordRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
-  useEffect(() => {
-    console.log("chord feedback: ", chordFeedback);
-  }, [chordFeedback]);
+  // useEffect(() => {
+  //   console.log("chord feedback: ", chordFeedback);
+  // }, [chordFeedback]);
+
   // creates blob URL (temporary in-browser url)
   useEffect(() => {
     if (selected) {
@@ -77,7 +79,7 @@ export default function Home() {
     }
   }, [selected]);
 
-  // get the current time in the audio
+  // get the current time in the audio (for custom UI sound bar in recording)
   useEffect(() => {
     if (!audioRef.current) {
       return;
@@ -85,45 +87,71 @@ export default function Home() {
 
     const audio = audioRef.current;
     const handleTimeUpdate = () => {
-      setTime(audio.currentTime);
+      setCurrentAudioTime(audio.currentTime);
+    };
+    const handleLoadedMetadata = () => {
+      setAudioDuration(audio.duration || 0);
     };
 
     audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("durationchange", handleLoadedMetadata);
 
     return () => {
       audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("durationchange", handleLoadedMetadata);
     };
-  }, [step, uniqueChordInfo]);
+  }, [step, uniqueChordURLs]);
 
-  // find chord time from sequence dict based on current time in audio
+  // formats audio time (for custom UI sound bar in recording)
+  const formatAudioTime = (seconds: number) => {
+    const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+    const mins = Math.floor(safeSeconds / 60);
+    const secs = Math.floor(safeSeconds % 60);
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  // calculates progress of song (for custom UI sound bar in recording)
+  const timelineProgress =
+    audioDuration > 0 ? Math.min((currentAudioTime / audioDuration) * 100, 100) : 0;
+
+  // adjust volume/mute settings based on UI triggers (for custom UI sound bar in recording)
+  useEffect(() => {
+    if (!audioRef.current) return;
+    audioRef.current.volume = playbackVolume;
+    audioRef.current.muted = isPlaybackMuted;
+  }, [playbackVolume, isPlaybackMuted, step, audioURL]);
+
+  // find closest chord time in sequence dict based on current time in audio 
   useEffect(() => {
     if (!sequence) {
       setChordTime(0);
       return;
     }
 
-    // sequence is a dict of time:chord, so have to convert it to nums to sort
+    // sequence is a dict of time:chord, so have to convert time to numeric to sort
     const times: [number, string][] = Object.entries(sequence)
       .map(
         ([time, chord]) =>
           [parseFloat(time), chord as string] as [number, string],
       )
       .sort(([a], [b]) => (a as number) - (b as number));
-    setTimes(times)
+    setTimesToChords(times)
     let chordTime = 0;
 
     // now sorted for sure, so iterate backwards
     for (let i = times.length - 1; i >= 0; i--) {
       const [cand] = times[i];
-      if (cand <= time) {
+      if (cand <= currentAudioTime) {
         chordTime = cand;
         break;
       }
     }
     setChordTime(chordTime);
-  }, [time, sequence]);
+  }, [currentAudioTime, sequence]);
 
-  // scroll to current chord when it changes
+  // scroll to current chord when it changes (scrolls whenever some audio playback starts)
   useEffect(() => {
     if (chordTime == null || !chordSequenceRef.current) return;
 
@@ -153,20 +181,11 @@ export default function Home() {
     // If it's in frame (even partially), do nothing
   }, [chordTime]);
 
-  // clears local storage upon refresh
-  // useEffect (() =>{
-  //   for (const key in localStorage){
-  //     if (key.startsWith("https://www.scales-chords.com")) {
-  //       localStorage.removeItem(key);
-  //     }
-  //   }
-  // }, [])
-
   // adds bottom padding to body when chord diagrams pop up
   useEffect(() => {
     if (
       (step === "analyze" || step === "record") &&
-      uniqueChordInfo &&
+      uniqueChordURLs &&
       cachedImages
     ) {
       document.body.style.paddingBottom = "1000px";
@@ -177,7 +196,7 @@ export default function Home() {
     return () => {
       document.body.style.paddingBottom = "";
     };
-  }, [step, uniqueChordInfo]);
+  }, [step, uniqueChordURLs]);
 
   // uploads user's file
   const handleUpload = async () => {
@@ -189,7 +208,6 @@ export default function Home() {
     if (recording == true) {
       stopRecording();
     }
-    setRecord(false);
 
     if (!selected) return;
     setUploading(true);
@@ -203,7 +221,6 @@ export default function Home() {
       });
       if (!res.ok) throw new Error("Server error");
       const data = await res.json();
-      setRes(JSON.stringify(data, null, 2));
       setUploading(false);
     } catch (error) {
       console.error(error);
@@ -218,7 +235,6 @@ export default function Home() {
     setSelected(event.target.files[0]);
     setUpload(false);
     setAnalyze(false);
-    setRecord(false);
   };
 
   // analyzes file
@@ -227,7 +243,6 @@ export default function Home() {
     if (recording == true) {
       stopRecording();
     }
-    setRecord(false);
 
     setStep("analyze");
     setAnalyze(true);
@@ -242,7 +257,6 @@ export default function Home() {
       });
       const result = await res.json();
       if (!res.ok) throw new Error("Server error");
-      setRes(JSON.stringify(result, null, 2));
       // object or dict
       console.log("Sequence:", result.chord_sequence);
       setSequence(result.chord_sequence);
@@ -278,7 +292,7 @@ export default function Home() {
         const result = await res.json();
         url_list.push(result);
       }
-      setuniqueChordInfo(url_list);
+      setuniqueChordURLs(url_list);
     } catch (error) {
       console.error(error);
     }
@@ -286,8 +300,8 @@ export default function Home() {
 
   // if the list of chord URLs has been gotten from fetchUniqueChords, try to load the image bytes into local storage
   useEffect(() => {
-    if (!uniqueChordInfo) return;
-    console.log("Unique Chord Info: ", uniqueChordInfo);
+    if (!uniqueChordURLs) return;
+    console.log("Unique Chord Info: ", uniqueChordURLs);
 
     setCacheing(true);
     const loadIntoCache = async () => {
@@ -295,7 +309,7 @@ export default function Home() {
       const cache = { ...cachedImages };
 
       // for each unique chord's url
-      for (const chord of uniqueChordInfo) {
+      for (const chord of uniqueChordURLs) {
         const url = chord.img_url;
         // try to get it from local storage if it's there
         const cachedImg = localStorage.getItem(url);
@@ -331,7 +345,7 @@ export default function Home() {
       setCacheing(false);
     };
     loadIntoCache();
-  }, [uniqueChordInfo]);
+  }, [uniqueChordURLs]);
 
   // Stop recording and cleanup
   const stopRecording = () => {
@@ -401,9 +415,9 @@ export default function Home() {
   // start countdown before recording
   const startCountdown = () => {
     console.log("starting countdown");
-    setTimerNum(3);
+    setCurrentAudioTimerNum(3);
     const intervalId = setInterval(() => {
-      setTimerNum((prev) => {
+      setCurrentAudioTimerNum((prev) => {
         if (prev <= 1) {
           clearInterval(intervalId);
           setTimeout(actualRecord, 100);
@@ -430,13 +444,12 @@ export default function Home() {
     }
 
     setStep("record");
-    setRecord(true);
-    setTime(0);
+    setCurrentAudioTime(0);
     setChordTime(0);
-    // setAccuracy(0)
-    // setCorrect(0)
-    // setChordsSoFar(0)
-    // setProgress(0)
+    setAccuracy(0)
+    setCorrect(0)
+    setChordsSoFar(0)
+    setProgress(0)
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
     }
@@ -654,21 +667,7 @@ export default function Home() {
             }
 
             errorMsg =
-              `❌ Cannot connect to WebSocket server!\n\n` +
-              `WebSocket URL: ${wsEndpoint}\n` +
-              `Backend Status: ${serverStatus}\n\n` +
-              `🔧 Troubleshooting Steps:\n\n` +
-              `1. Start the backend server:\n` +
-              `   cd guitar-song-simplifier/backend\n` +
-              `   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload\n\n` +
-              `   OR if using Docker:\n` +
-              `   docker-compose up backend\n\n` +
-              `2. Verify the server is running:\n` +
-              `   - Open: ${healthUrl}/health\n` +
-              `   - Should return: {"status":"healthy",...}\n\n` +
-              `3. Check your environment:\n` +
-              `   - NEXT_PUBLIC_API_URL=${API_URL || "not set (defaults to http://localhost:8000)"}\n\n` +
-              `4. Check the backend terminal for errors`;
+              `Cannot connect to WebSocket server!`;
           } else if (event.reason) {
             errorMsg = `Connection closed: ${event.reason}`;
           }
@@ -689,71 +688,62 @@ export default function Home() {
     }
   };
 
+  // play sound (on mute) after countdown
   const playAfterCountdown = async () => {
     if (count === true) {
       if (audioRef.current) {
+        setIsPlaybackMuted(true);
         audioRef.current.play();
-        audioRef.current.muted = true;
       }
     }
   };
 
+  // short timeout after countdown to trigger playing of soundbar (helps user keep track of time)
   useEffect(() => {
     setTimeout(playAfterCountdown, 3000);
   }, [count]);
 
+  // stop recording if reached end of track
   useEffect(() => {
-    if (audioRef.current && audioRef.current.paused) {
+    if (audioDuration == currentAudioTime) {
       stopRecording();
     }
-  }, [audioRef.current]);
+  }, [audioDuration, currentAudioTime]);
 
+  // update correct chords played if status was good
   useEffect(() => {
     if (chordFeedback?.status == "good") {
       setCorrect(correct + 1);
     }
   }, [chordFeedback]);
 
-  // // up to what you should have played so far
+  // track total chords that should've been played so far
   useEffect(() => {
-    // const prev = prevChordTime.current
-    // if (chordTime > prev){
-    //   setChordsSoFar(sofar + 1);
-    // }
-    // prevChordTime.current = chordTime
-
-    // setChordsSoFar(sofar + 1);
-    const index = times.findIndex(([t]) => t === chordTime);
-
+    const index = timesToChords.findIndex(([t]) => t === chordTime);
     setChordsSoFar(index+1)
   }, [chordTime]);
 
+  // compute accuracy and progress
   useEffect(() => {
-    const prev = prevChordTime.current
-    // if user scrolled back or too far forwards , reset accuracy to 0
-    if (times.findIndex(([t]) => t === chordTime) > sofar + 1){
-      setAccuracy(0)
-    } else{
-    setAccuracy((correct / sofar) * 100);
+    if (sofar > 0){
+      setAccuracy((correct / sofar) * 100);
     }
-
     if (sequence) {
       setProgress((sofar / Object.keys(sequence).length) * 100);
     }
-    prevChordTime.current = chordTime
   }, [correct, sofar, chordTime]);
 
-  useEffect(() => {
-    console.log("correct", correct);
-  }, [correct]);
+  // useEffect(() => {
+  //   console.log("correct", correct);
+  // }, [correct]);
 
-  useEffect(() => {
-    console.log("accuracy", accuracy);
-  }, [accuracy]);
+  // useEffect(() => {
+  //   console.log("accuracy", accuracy);
+  // }, [accuracy]);
 
-  useEffect(() => {
-    console.log("progress", progress);
-  }, [progress]);
+  // useEffect(() => {
+  //   console.log("progress", progress);
+  // }, [progress]);
 
   // useEffect(()=>{
   //   console.log("debug: ", {
@@ -932,10 +922,10 @@ export default function Home() {
             </div>
           )}
 
-          {(step == "analyze" || step == "record") && uniqueChordInfo && (
+          {(step == "analyze" || step == "record") && uniqueChordURLs && (
             <div className="fixed bottom-0 left-0 right-0 bg-white-900/95 backdrop-blur-sm border-t border-white-700 p-4 z-50">
-              {/* recording sound bar */}
-              {audioURL && (step === "analyze" || step === "record") && (
+              {/* native sound bar for analysis */}
+               {audioURL && (step === "analyze") && (
                 <div className="mb-6 flex flex-col items-center gap-2">
                   <audio
                     key="native"
@@ -946,7 +936,59 @@ export default function Home() {
                   />
                 </div>
               )}
-              {/* Big container for chord diagrams during analysis */}
+              {/* custom sound bar for recording (no seeking or pause) */}
+              {audioURL && (step === "record") && (
+                <div className="mb-6 flex flex-col items-center gap-2">
+                  <audio
+                    key="native"
+                    ref={audioRef}
+                    src={audioURL}
+                    muted={isPlaybackMuted}
+                    className="hidden"
+                  />
+                  <div className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900/70 px-4 py-3">
+                    <div className="flex items-center gap-4">
+                      <button
+                        type="button"
+                        onClick={() => setIsPlaybackMuted((prev) => !prev)}
+                        className="rounded-md border border-gray-600 px-3 py-1.5 text-sm font-medium text-gray-200 hover:bg-gray-800 transition-colors"
+                      >
+                        {isPlaybackMuted ? "Unmute" : "Mute"}
+                      </button>
+                      <div className="flex flex-1 items-center gap-2">
+                        <span className="text-xs text-gray-400">Volume</span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={playbackVolume}
+                          onChange={(e) =>
+                            setPlaybackVolume(Number(e.target.value))
+                          }
+                          className="w-full accent-blue-400"
+                          aria-label="Recording playback volume"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <div className="mb-1 h-2 w-full overflow-hidden rounded-full bg-gray-700">
+                        <div
+                          className="h-full rounded-full bg-blue-400 transition-all"
+                          style={{ width: `${timelineProgress}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-xs text-gray-400">
+                        <span>{formatAudioTime(currentAudioTime)}</span>
+                        <span>{formatAudioTime(audioDuration)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              
+              {/* Big container for chord diagrams during analysis and record */}
               <div className="flex flex-col items-start gap-6">
                 {/* general chords */}
                 <div className="w-full ">
@@ -956,7 +998,7 @@ export default function Home() {
                   <div className=" flex flex-wrap justify-center gap-4 max-h-64 overflow-y-auto px-4 pb-4">
                     {cacheing
                       ? "Getting chords..."
-                      : uniqueChordInfo.map((chord: any, i: number) => (
+                      : uniqueChordURLs.map((chord: any, i: number) => (
                           <div
                             key={i}
                             className="flex flex-col items-center bg-blue-800/70 rounded-lg p-3 hover:bg-gray-800 transition-colors"
@@ -983,22 +1025,11 @@ export default function Home() {
                     ref={chordSequenceRef}
                     className="flex gap-4 overflow-x-auto overflow-y-hidden whitespace-nowrap px-4 pb-4"
                   >
-                    {Object.entries(sequence)
-                      // first map adds new numerical representation of chord times
-                      .map(
-                        ([time, chord]) =>
-                          [parseFloat(time), time, chord] as [
-                            number,
-                            string,
-                            string,
-                          ],
-                      )
-                      // sorts in ascending order just in case
-                      .sort(([a], [b]) => a - b)
-                      // maps again for rendering info
-                      .map(([numTime, time, chord]) => {
+                    {/* rendering chord sequence */}
+
+                      {timesToChords.map(([numTime, chord]) => {
                         // finds url for each chord for diagram display (including fallback)
-                        const info = uniqueChordInfo.find(
+                        const info = uniqueChordURLs.find(
                           (i: any) => i.chord === chord,
                         );
                         const url = info?.img_url;
@@ -1024,7 +1055,7 @@ export default function Home() {
 
                         return (
                           <div
-                            key={time}
+                            key={numTime}
                             ref={(el) => {
                               chordRefs.current[numTime] = el;
                             }}
