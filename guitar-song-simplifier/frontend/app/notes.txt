@@ -1,9 +1,0 @@
-
-WIP:
-- accuracy tracker (correct chords hit out of total chords needed to be played)
-BUGS:
-    - how to track correct chords better?
-    
-FUTURE:
-- keep playback of users own recording as well
-- database
