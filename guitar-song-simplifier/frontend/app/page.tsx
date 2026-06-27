@@ -1,13 +1,21 @@
 "use client";
 import React, { useRef, useState, useEffect } from "react";
-import Script from "next/script";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
+import{
+  ChordFeedback, ChordToURL, Step
+} from "@/lib/types"
+import{
+  uploadFile, analyzeFile, fetchChordUrl, fetchChordImageBytes, getWebSocketRecordUrl, checkHealth
+} from "@/lib/api"
+import { Header } from "@/components/Header";
+import { ActionButtons } from "@/components/ActionButtons";
+import { RecordingPanel } from "@/components/RecordingPanel";
+import { CustomSoundBar
+ } from "@/components/CustomSoundBar";
+import { ChordsToKnowDiagram } from "@/components/ChordsToKnowDiagram";
+import { ChordSequenceDiagram } from "@/components/ChordSequenceDiagram";
 
 export default function Home() {
-  const [step, setStep] = useState<"upload" | "analyze" | "record" | null>(
-    null,
-  );
+  const [step, setStep] = useState<Step>(null);
   // steps
   const [selected, setSelected] = useState<File | null>(null);
   const [upload, setUpload] = useState(false);
@@ -34,15 +42,11 @@ export default function Home() {
   const audioChunksSentRef = useRef(0);
   // Real-time chord detection feedback
   const [detectedChord, setDetectedChord] = useState<string | null>(null);
-  const [chordFeedback, setChordFeedback] = useState<{
-    status: string;
-    message: string;
-    timestamp: number;
-  } | null>(null);
+  const [chordFeedback, setChordFeedback] = useState< ChordFeedback| null>(null);
   // singular chords extracted from current song
   const [uniqueChords, setUniqueChords] = useState<any>(null);
   // urls for chords extracted from current song
-  const [uniqueChordURLs, setuniqueChordURLs] = useState<any>(null);
+  const [uniqueChordURLs, setuniqueChordURLs] = useState<ChordToURL[] | null>(null);
   // sequence of times to chords extracted from current song
   const [sequence, setSequence] = useState<any>(null);
   const [timesToChords, setTimesToChords] = useState<[number, string][]>([]);
@@ -103,14 +107,6 @@ export default function Home() {
       audio.removeEventListener("durationchange", handleLoadedMetadata);
     };
   }, [step, uniqueChordURLs]);
-
-  // formats audio time (for custom UI sound bar in recording)
-  const formatAudioTime = (seconds: number) => {
-    const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
-    const mins = Math.floor(safeSeconds / 60);
-    const secs = Math.floor(safeSeconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
 
   // calculates progress of song (for custom UI sound bar in recording)
   const timelineProgress =
@@ -211,16 +207,9 @@ export default function Home() {
 
     if (!selected) return;
     setUploading(true);
-    const formData = new FormData();
-    formData.append("file", selected);
 
     try {
-      const res = await fetch(`${API_URL}/upload_file`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) throw new Error("Server error");
-      const data = await res.json();
+      await uploadFile(selected)
       setUploading(false);
     } catch (error) {
       console.error(error);
@@ -249,14 +238,7 @@ export default function Home() {
     if (!selected) return;
     setAnalyzing(true);
     try {
-      const formData = new FormData();
-      formData.append("file", selected);
-      const res = await fetch(`${API_URL}/analyze`, {
-        method: "POST",
-        body: formData,
-      });
-      const result = await res.json();
-      if (!res.ok) throw new Error("Server error");
+      const result = await analyzeFile(selected)
       // object or dict
       console.log("Sequence:", result.chord_sequence);
       setSequence(result.chord_sequence);
@@ -284,12 +266,7 @@ export default function Home() {
     try {
       const url_list = [];
       for (const chord of uniqueChords) {
-        // proxy
-        const res = await fetch(
-          `${API_URL}/load_unique_chord_url?chord=${encodeURIComponent(chord)}`,
-        );
-        if (!res.ok) throw new Error("External API error");
-        const result = await res.json();
+        const result = await fetchChordUrl(chord)
         url_list.push(result);
       }
       setuniqueChordURLs(url_list);
@@ -320,11 +297,8 @@ export default function Home() {
         // if not, fetch it first and then put into cache
         else {
           try {
-            console.log(`${chord.chord} is NOT in local storage`);
-            const res = await fetch(
-              `${API_URL}/load_chord_image_bytes?url=${encodeURIComponent(url)}`,
-            );
-            const blob = await res.blob();
+            console.log(`${chord.chord} is NOT in local storage, fetching and cacheing...`);
+            const blob = await fetchChordImageBytes(url)
             const reader = new FileReader();
 
             reader.onloadend = () => {
@@ -480,24 +454,8 @@ export default function Home() {
 
     try {
       // Get WebSocket URL (replace http/https with ws/wss)
-      let wsUrl = API_URL || "http://localhost:8000";
-
-      // Handle URL conversion properly
-      if (wsUrl.startsWith("http://")) {
-        wsUrl = wsUrl.replace("http://", "ws://");
-      } else if (wsUrl.startsWith("https://")) {
-        wsUrl = wsUrl.replace("https://", "wss://");
-      } else if (!wsUrl.startsWith("ws://") && !wsUrl.startsWith("wss://")) {
-        // If no protocol, assume http and convert to ws
-        wsUrl = `ws://${wsUrl}`;
-      }
-
-      // Remove trailing slash if present
-      wsUrl = wsUrl.replace(/\/$/, "");
-
-      const wsEndpoint = `${wsUrl}/ws/record`;
+      const wsEndpoint = getWebSocketRecordUrl()
       console.log("Connecting to WebSocket:", wsEndpoint);
-
       const ws = new WebSocket(wsEndpoint);
       wsRef.current = ws;
 
@@ -654,14 +612,10 @@ export default function Home() {
           let errorMsg = `Connection closed`;
           if (event.code === 1006) {
             // Connection refused - server likely not running
-            const healthUrl = API_URL || "http://localhost:8000";
             let serverStatus = "Unknown";
             try {
-              const healthCheck = await fetch(`${healthUrl}/health`, {
-                method: "GET",
-                signal: AbortSignal.timeout(3000),
-              });
-              serverStatus = healthCheck.ok ? "Running" : "Not responding";
+              const healthCheck = await checkHealth()
+              serverStatus = healthCheck? "Running" : "Not responding";
             } catch (e) {
               serverStatus = "Not accessible";
             }
@@ -765,68 +719,21 @@ export default function Home() {
     <div>
       <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
         <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-          {/* Title and main text */}
-          <h1 className="font-mono text-5xl font-bold mb-10 text-gray-300">
-            Guitar Song Simplifier
-          </h1>
-          <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-            <li className="mb-2 tracking-[-.01em]">Browse a new song</li>
-            <li className="mb-2 tracking-[-.01em]">Upload your song</li>
-            <li className="mb-2 tracking-[-.01em]">
-              Analyze the song to extract chords and rhythm
-            </li>
-            <li className="mb-2 tracking-[-.01em]">
-              Press record to play and gain feedback in real time
-            </li>
-          </ol>
+          <Header />
 
-          {/* Main buttons */}
-          <div className="flex gap-4 items-center flex-col sm:flex-row">
-            <input
-              className="rounded-full px-5 py-3 font-medium bg-gray-200 hover:bg-gray-300 text-black"
-              type="file"
-              accept="audio/*"
-              onChange={uploadHandler}
-            />
-
-            <button
-              onClick={handleUpload}
-              disabled={!selected || uploading}
-              className={`rounded-full px-5 py-3 font-medium ${
-                selected && !uploading
-                  ? "bg-gray-200 hover:bg-gray-300 text-black"
-                  : "bg-gray-400 cursor-not-allowed text-gray-200"
-              }`}
-            >
-              {uploading ? "Uploading..." : "Upload Song"}
-            </button>
-
-            <button
-              onClick={handleAnalyze}
-              disabled={!upload || uploading}
-              className={`rounded-full px-5 py-3 font-medium ${
-                upload && !uploading
-                  ? "bg-gray-200 hover:bg-gray-300 text-black"
-                  : "bg-gray-400 cursor-not-allowed text-gray-200"
-              }`}
-            >
-              {analyzing ? "Analyzing..." : "Analyze Song"}
-            </button>
-
-            <button
-              onClick={handleRecord}
-              disabled={!analyze || analyzing || cacheing}
-              className={`rounded-full px-5 py-3 font-medium ${
-                analyze && !analyzing && !cacheing
-                  ? recording
-                    ? "bg-red-500 hover:bg-red-600 text-white"
-                    : "bg-gray-200 hover:bg-gray-300 text-black"
-                  : "bg-gray-400 cursor-not-allowed text-gray-200"
-              }`}
-            >
-              {recording ? "Stop Recording" : "Start Recording"}
-            </button>
-          </div>
+          <ActionButtons
+            selected={selected}
+            uploading={uploading}
+            upload={upload}
+            analyzing={analyzing}
+            analyze={analyze}
+            recording={recording}
+            cacheing={cacheing}
+            onFileSelect={uploadHandler}
+            onUpload={handleUpload}
+            onAnalyze={handleAnalyze}
+            onRecord={handleRecord}
+          />
         </main>
 
         {/* UI Changes for Each Step */}
@@ -835,91 +742,14 @@ export default function Home() {
           {step == "upload" && <p>File Uploaded!</p>}
 
           {step == "record" && (
-            <div className="w-full max-w-2xl p-6 rounded-xl shadow-md">
-              {/* Countdown */}
-              <div className="text-center mb-6 p-4 bg-gray-800/50 rounded-lg">
-                {timerNum > 0 && <p> Recording starting in {timerNum} ... </p>}
-              </div>
-
-              {recording ? (
-                <div className="space-y-6">
-                  {/* SHOWS DETECTED CHORD AND FEEDBACK */}
-                  <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
-                    {" "}
-                    <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                    <p className="text-gray-300">Recording...</p>
-                    <div className="p-4 rounded-lg bg-gray-800">
-                      <p className="text-lg font-semibold text-gray-200 mb-2">
-                        <span className="text-blue-400">
-                          Progress: {Math.round(progress)}%
-                        </span>
-                        <p></p>
-                        <span className="text-blue-400">
-                          Accuracy: {Math.round(accuracy)}%
-                        </span>
-                      </p>
-                    </div> 
-                  </div>
-
-                  {detectedChord && (
-                    <div className="p-4 rounded-lg bg-gray-800">
-                      <p className="text-lg font-semibold text-gray-200 mb-2">
-                        Detected Chord:{" "}
-                        <span className="text-blue-400">{detectedChord}</span>
-                      </p>
-
-                      {chordFeedback && (
-                        <div
-                          className={`p-3 rounded ${
-                            chordFeedback.status === "good"
-                              ? "bg-green-600/30 border border-green-500"
-                              : chordFeedback.status === "wrong_chord" ||
-                                  chordFeedback.status === "wrong"
-                                ? "bg-red-600/30 border border-red-500"
-                                : chordFeedback.status === "too_early" ||
-                                    chordFeedback.status === "too_late"
-                                  ? "bg-yellow-600/30 border border-yellow-500"
-                                  : "bg-gray-700 border border-gray-600"
-                          }`}
-                        >
-                          <p
-                            className={`font-medium ${
-                              chordFeedback.status === "good"
-                                ? "text-green-300"
-                                : // correct += 1
-                                  chordFeedback.status === "wrong_chord" ||
-                                    chordFeedback.status === "wrong"
-                                  ? "text-red-300"
-                                  : chordFeedback.status === "too_early" ||
-                                      chordFeedback.status === "too_late"
-                                    ? "text-yellow-300"
-                                    : "text-gray-300"
-                            }`}
-                          >
-                            {chordFeedback.message}
-                          </p>
-                          <p className="text-sm text-gray-400 mt-1">
-                            Time:{" "}
-                            {Math.floor(
-                              Number(chordFeedback.timestamp.toFixed(2)) / 60,
-                            )}
-                            min{" "}
-                            {Math.floor(
-                              Number(chordFeedback.timestamp.toFixed(2)) % 60,
-                            )}
-                            s
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="text-gray-300">
-                  Click "Start Recording" to start real-time chord detection.
-                </p>
-              )}
-            </div>
+            <RecordingPanel
+              timerNum={timerNum}
+              recording={recording}
+              progress={progress}
+              accuracy={accuracy}
+              detectedChord={detectedChord}
+              chordFeedback={chordFeedback}
+            />
           )}
 
           {(step == "analyze" || step == "record") && uniqueChordURLs && (
@@ -938,150 +768,38 @@ export default function Home() {
               )}
               {/* custom sound bar for recording (no seeking or pause) */}
               {audioURL && (step === "record") && (
-                <div className="mb-6 flex flex-col items-center gap-2">
-                  <audio
-                    key="native"
-                    ref={audioRef}
-                    src={audioURL}
-                    muted={isPlaybackMuted}
-                    className="hidden"
-                  />
-                  <div className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900/70 px-4 py-3">
-                    <div className="flex items-center gap-4">
-                      <button
-                        type="button"
-                        onClick={() => setIsPlaybackMuted((prev) => !prev)}
-                        className="rounded-md border border-gray-600 px-3 py-1.5 text-sm font-medium text-gray-200 hover:bg-gray-800 transition-colors"
-                      >
-                        {isPlaybackMuted ? "Unmute" : "Mute"}
-                      </button>
-                      <div className="flex flex-1 items-center gap-2">
-                        <span className="text-xs text-gray-400">Volume</span>
-                        <input
-                          type="range"
-                          min="0"
-                          max="1"
-                          step="0.01"
-                          value={playbackVolume}
-                          onChange={(e) =>
-                            setPlaybackVolume(Number(e.target.value))
-                          }
-                          className="w-full accent-blue-400"
-                          aria-label="Recording playback volume"
-                        />
-                      </div>
-                    </div>
-                    <div className="mt-3">
-                      <div className="mb-1 h-2 w-full overflow-hidden rounded-full bg-gray-700">
-                        <div
-                          className="h-full rounded-full bg-blue-400 transition-all"
-                          style={{ width: `${timelineProgress}%` }}
-                        />
-                      </div>
-                      <div className="flex justify-between text-xs text-gray-400">
-                        <span>{formatAudioTime(currentAudioTime)}</span>
-                        <span>{formatAudioTime(audioDuration)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <CustomSoundBar
+                audioRef={audioRef}
+                audioURL={audioURL}
+                isPlaybackMuted={isPlaybackMuted}
+                playbackVolume={playbackVolume}
+                onSetPlaybackMuted={() => setIsPlaybackMuted(prev => !prev)}  
+                onSetPlaybackVolume={setPlaybackVolume}  
+                timelineProgress={timelineProgress}
+                currentAudioTime={currentAudioTime}
+                audioDuration={audioDuration}
+              />
               )}
 
               
               {/* Big container for chord diagrams during analysis and record */}
               <div className="flex flex-col items-start gap-6">
                 {/* general chords */}
-                <div className="w-full ">
-                  <h3 className="text-center mb-4 font-mono text-lg text-gray-200">
-                    Chords You Have to Know
-                  </h3>
-                  <div className=" flex flex-wrap justify-center gap-4 max-h-64 overflow-y-auto px-4 pb-4">
-                    {cacheing
-                      ? "Getting chords..."
-                      : uniqueChordURLs.map((chord: any, i: number) => (
-                          <div
-                            key={i}
-                            className="flex flex-col items-center bg-blue-800/70 rounded-lg p-3 hover:bg-gray-800 transition-colors"
-                          >
-                            <img
-                              src={cachedImages[chord.img_url] || chord.img_url}
-                              alt={chord.chord}
-                              className="max-w-[120px] max-h-[120px] object-contain mb-2"
-                            />
-                            <p className="font-mono text-sm text-gray-300 font-medium">
-                              {chord.chord}
-                            </p>
-                          </div>
-                        ))}
-                  </div>
-                </div>
+                <ChordsToKnowDiagram
+                      cacheing = {cacheing}
+                      uniqueChordURLs = {uniqueChordURLs}
+                      cachedImages={cachedImages}
+                />
+                {/* sequence */}
+                <ChordSequenceDiagram
+                  chordSequenceRef={chordSequenceRef}
+                  timesToChords={timesToChords}
+                  uniqueChordURLs={uniqueChordURLs}
+                  chordTime={chordTime}
+                  chordRefs={chordRefs}
+                  cachedImages={cachedImages}
 
-                <div className="w-full">
-                  {/* chord sequence */}
-                  <h3 className="text-center mb-4 font-mono text-lg text-gray-200">
-                    Your Chord Sequence
-                  </h3>
-                  <div
-                    ref={chordSequenceRef}
-                    className="flex gap-4 overflow-x-auto overflow-y-hidden whitespace-nowrap px-4 pb-4"
-                  >
-                    {/* rendering chord sequence */}
-
-                      {timesToChords.map(([numTime, chord]) => {
-                        // finds url for each chord for diagram display (including fallback)
-                        const info = uniqueChordURLs.find(
-                          (i: any) => i.chord === chord,
-                        );
-                        const url = info?.img_url;
-                        // boolean to trigger if current chord is the one the audio is playing through
-                        // depends on chordTime state, which represents a real time from the sequence dict
-                        const isCurrentChord =
-                          chordTime !== null &&
-                          Math.abs(chordTime - numTime) < 0.1;
-
-                        const minutes = Math.floor(numTime / 60);
-                        const remainder = Math.ceil(numTime % 60);
-                        var newTime =
-                          String(minutes) +
-                          " min " +
-                          String(remainder) +
-                          " sec";
-                        if (minutes == 0) {
-                          newTime = String(remainder) + " sec";
-                        }
-                        if (remainder == 0) {
-                          newTime = String(minutes) + " min ";
-                        }
-
-                        return (
-                          <div
-                            key={numTime}
-                            ref={(el) => {
-                              chordRefs.current[numTime] = el;
-                            }}
-                            className={`flex flex-col items-center rounded-lg p-3 transition-all ${
-                              isCurrentChord
-                                ? "bg-yellow-600/90 scale-110 shadow-lg ring-2 ring-yellow-400"
-                                : "bg-green-800/70 hover:bg-gray-800"
-                            }`}
-                          >
-                            <p className="font-mono text-sm text-gray-300 font-medium">
-                              {newTime}
-                            </p>
-
-                            <img
-                              src={cachedImages[url] || url}
-                              alt={chord}
-                              className="max-w-[120px] max-h-[120px] object-contain mb-2"
-                            />
-                            <p className="font-mono text-sm text-gray-300 font-medium">
-                              {chord}
-                            </p>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </div>
+                />
               </div>
             </div>
           )}
