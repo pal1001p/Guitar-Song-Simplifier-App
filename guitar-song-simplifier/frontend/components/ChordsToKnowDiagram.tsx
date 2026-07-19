@@ -1,11 +1,11 @@
 "use client"
 
-import { ChordToURL } from "@/lib/types"
+import { ChordUrlResult } from "@/lib/types"
 
 type ChordsToKnowDiagramProps = {
     cacheing: boolean,
     // array of {chord, img_url}
-    uniqueChordURLs: ChordToURL[],
+    uniqueChordURLs: ChordUrlResult[],
     // url string : base64 string representing image
     cachedImages: {[url: string]: string}
 }
