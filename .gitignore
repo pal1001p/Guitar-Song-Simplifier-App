@@ -35,3 +35,4 @@ venv/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+guitar-song-simplifier/frontend/app/notes.txt
