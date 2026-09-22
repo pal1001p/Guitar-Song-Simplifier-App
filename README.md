@@ -11,11 +11,11 @@ git clone https://github.com/pal1001p/Guitar-Song-Simplifier-App.git
 cd guitar-song-simplifier
 docker compose up 
 ```
-## API endpoints:
+## Servers:
 - Frontend: http://localhost:3000/
 - Backend: http://localhost:8000/
 
-## Example commands to try:
+## Example API to try:
 To get beat times:
 ```bash
 curl -X POST "http://localhost:8000/analyze-audio/" \
