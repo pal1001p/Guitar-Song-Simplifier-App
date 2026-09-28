@@ -1,6 +1,7 @@
 "use client";
 import React, { useRef, useState, useEffect } from "react";
 import{
+  CachedImages,
   ChordUrlResult, Step
 } from "@/lib/types"
 import{
@@ -27,7 +28,7 @@ export default function Home() {
   const [uniqueChords, setUniqueChords] = useState<any>(null);
   const [uniqueChordURLs, setuniqueChordURLs] = useState<ChordUrlResult[] | null>(null);
   const [sequence, setSequence] = useState<any>(null);
-  const [cachedImages, setCachedImages] = useState<{ [key: string]: string }>({});
+  const [cachedImages, setCachedImages] = useState<CachedImages>({});
   const [cacheing, setCacheing] = useState(false);
 
   // ============ AUDIO STATE ============

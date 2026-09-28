@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { ChordFeedback } from '@/lib/types';
 import { getWebSocketRecordUrl, checkHealth } from '@/lib/api';
+import { TimesToChords } from "@/lib/types";
 
 type UseRecordingParams = {
   sequence: any;
@@ -13,7 +14,7 @@ export function useRecording({
   uniqueChords,
   currentAudioTime,
 }: UseRecordingParams) {
-  // ============ RECORDING STATE ============
+  // ============ RECORDING STATES ============
   const [recording, setRecording] = useState(false);
   const [count, setCountFinished] = useState(false);
   const [accuracy, setAccuracy] = useState(0);
@@ -23,7 +24,7 @@ export function useRecording({
   const [detectedChord, setDetectedChord] = useState<string | null>(null);
   const [chordFeedback, setChordFeedback] = useState<ChordFeedback | null>(null);
   const [timerNum, setCurrentAudioTimerNum] = useState(0);
-  const [timesToChords, setTimesToChords] = useState<[number, string][]>([]);
+  const [timesToChords, setTimesToChords] = useState<TimesToChords[]>([]);
   const [chordTime, setChordTime] = useState(0);
   const [stopped, setStopped] = useState(true)
 

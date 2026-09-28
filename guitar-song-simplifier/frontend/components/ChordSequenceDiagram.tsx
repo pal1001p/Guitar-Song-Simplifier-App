@@ -1,12 +1,12 @@
 "use client";
-import { ChordUrlResult } from "@/lib/types";
+import { CachedImages, ChordUrlResult, TimesToChords } from "@/lib/types";
 type ChordSequenceDiagramProps = {
     chordSequenceRef: React.RefObject<HTMLDivElement | null>;
-    timesToChords: [time: number, chord: string][];
+    timesToChords: TimesToChords[];
     uniqueChordURLs: ChordUrlResult[];
     chordTime: number;
     chordRefs: React.RefObject<{ [key: string]: HTMLDivElement | null }>;
-    cachedImages: { [url: string]: string };
+    cachedImages: CachedImages
 };
 
 export function ChordSequenceDiagram({

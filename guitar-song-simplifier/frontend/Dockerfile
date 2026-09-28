@@ -1,19 +1,17 @@
-FROM node:18-alpine
+FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm install
+# Install optional native packages for this Linux image.
+# Lockfiles generated on macOS often omit linux lightningcss/SWC binaries
+# (https://github.com/npm/cli/issues/4828), which breaks next/font.
+RUN npm install --include=optional
 
-# Copy source code
 COPY . .
 
-# Expose port
 EXPOSE 3000
 
-# Start development server
-CMD ["npm", "run", "dev"]
-
+# Reinstall on start so an old Docker volume cannot keep Darwin/Alpine binaries.
+CMD ["sh", "-c", "npm install --include=optional && npm run dev"]
